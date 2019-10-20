@@ -233,6 +233,82 @@ end
 
 PRINT_HANDLERS["ret"] = ret_print_handler
 
+function xor_print_handler(io::IO, instr::AssemblyInstruction)
+    if length(instr.operands) == 2
+        dst, src = instr.operands
+        if dst == src
+            print(io, '\t')
+            print_asm(io, dst)
+            println(io, " = 0;")
+        else
+            print(io, '\t')
+            print_asm(io, dst)
+            print(io, " ^= ")
+            print_asm(io, src)
+            println(io, ";")
+        end
+    elseif length(instr.operands) == 3
+        dst, src1, src2 = instr.operands
+        if (dst == src1) && (src1 == src2)
+            print(io, '\t')
+            print_asm(io, dst)
+            println(io, " = 0;")
+        else
+            @assert false
+        end
+    else
+        @assert false
+    end
+end
+
+PRINT_HANDLERS["xor"   ] = xor_print_handler
+PRINT_HANDLERS["vxorss"] = xor_print_handler
+PRINT_HANDLERS["vxorsd"] = xor_print_handler
+PRINT_HANDLERS["vxorps"] = xor_print_handler
+PRINT_HANDLERS["vxorpd"] = xor_print_handler
+
+function add_print_handler(io::IO, instr::AssemblyInstruction)
+    if length(instr.operands) == 2
+        dst, src = instr.operands
+        print(io, '\t')
+        print_asm(io, dst)
+        print(io, " += ")
+        print_asm(io, src)
+        println(io, ";")
+    elseif length(instr.operands) == 3
+        dst, src1, src2 = instr.operands
+        if dst == src1
+            print(io, '\t')
+            print_asm(io, dst)
+            print(io, " += ")
+            print_asm(io, src2)
+            println(io, ";")
+        elseif dst == src2
+            print(io, '\t')
+            print_asm(io, dst)
+            print(io, " += ")
+            print_asm(io, src1)
+            println(io, ";")
+        else
+            print(io, '\t')
+            print_asm(io, dst)
+            print(io, " = ")
+            print_asm(io, src1)
+            print(io, " + ")
+            print_asm(io, src2)
+            println(io, ";")
+        end
+    else
+        @assert false
+    end
+end
+
+PRINT_HANDLERS["add"   ] = add_print_handler
+PRINT_HANDLERS["vaddss"] = add_print_handler
+PRINT_HANDLERS["vaddsd"] = add_print_handler
+PRINT_HANDLERS["vaddps"] = add_print_handler
+PRINT_HANDLERS["vaddpd"] = add_print_handler
+
 function unknown_print_handler(io::IO, instr::AssemblyInstruction)
     print(io, '\t', rpad('{' * instr.instruction * '}', 16))
     for (i, op) in enumerate(instr.operands)
