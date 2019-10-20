@@ -360,7 +360,8 @@ end
 is_instr(stmt::AssemblyStatement, instr::AbstractString)::Bool =
     (stmt isa AssemblyInstruction) && (stmt.instruction == instr)
 
-function remove_nops(stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
+function remove_nops(
+        stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
     result = AssemblyStatement[]
     for stmt in stmts
         if all(!is_instr(stmt, nop) for nop in ["nop", "vzeroupper", "ud2"])
@@ -370,12 +371,14 @@ function remove_nops(stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement
     return result
 end
 
-function remove_prologue_epilogue(stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
+function remove_prologue_epilogue(
+        stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
     @assert is_instr(stmts[1], "push")
     @assert length(stmts[1].operands) == 1
     @assert stmts[1].operands[1] == AssemblyRegister("rbp")
     @assert is_instr(stmts[2], "mov")
-    @assert stmts[2].operands == [AssemblyRegister("rbp"), AssemblyRegister("rsp")]
+    @assert stmts[2].operands == [AssemblyRegister("rbp"),
+                                  AssemblyRegister("rsp")]
     prologue_len = 3
     while is_instr(stmts[prologue_len], "push")
         prologue_len += 1
@@ -397,8 +400,8 @@ function remove_prologue_epilogue(stmts::Vector{AssemblyStatement})::Vector{Asse
             @assert stmt.operands[1] == reg
         end
     end
-    return deleteat!(copy(stmts),
-        vcat(1:prologue_len, [i-length(saved_regs) : i-1 for i in ret_indices]...))
+    return deleteat!(copy(stmts), vcat(1:prologue_len,
+        [i-length(saved_regs) : i-1 for i in ret_indices]...))
 end
 
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
