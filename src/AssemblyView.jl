@@ -1,6 +1,6 @@
 module AssemblyView
 
-export parsed_asm, view_asm
+export parsed_asm, asm_offsets, view_asm
 
 ################################################################################
 
@@ -161,6 +161,24 @@ function parsed_asm(@nospecialize(func), @nospecialize(types...);
         end
     end
     return parsed_stmts
+end
+
+################################################################################
+
+function asm_offsets(
+        @nospecialize(func), @nospecialize(types...))::Vector{String}
+    result = String[]
+    stmts = parsed_asm(func, types...)
+    for stmt in stmts
+        if stmt isa AssemblyInstruction
+            for op in stmt.operands
+                if op isa AssemblyOffset
+                    push!(result, op.name)
+                end
+            end
+        end
+    end
+    return result
 end
 
 ################################################################################
