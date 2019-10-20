@@ -122,7 +122,7 @@ function parse_assembly_statement(stmt::AbstractString)
         # if there is a second tab, then the instruction operands follow it
         elseif length(tokens) == 3
             # some instructions are output with a #-delimited comment
-            arg_tokens = split(tokens[3], '#')
+            arg_tokens = split(tokens[3], " # ")
             if length(arg_tokens) == 1
                 return AssemblyInstruction(tokens[2],
                     parse_assembly_operand.(split(arg_tokens[1], ',')))
@@ -140,6 +140,9 @@ end
 
 function parsed_asm(@nospecialize(func), @nospecialize(types...);
         keep_comments::Bool=false)::Vector{AssemblyStatement}
+    if (length(types) == 1) && !(types[1] isa Type)
+        types = types[1]
+    end
     stmts = split(_dump_function(func, types,
         true,   # Generate native code (as opposed to LLVM IR).
         false,  # Don't generate wrapper code.
@@ -200,6 +203,8 @@ end
 
 PRINT_HANDLERS["mov"    ] = mov_print_handler
 PRINT_HANDLERS["movabs" ] = mov_print_handler
+PRINT_HANDLERS["vmovss" ] = mov_print_handler
+PRINT_HANDLERS["vmovsd" ] = mov_print_handler
 PRINT_HANDLERS["vmovaps"] = mov_print_handler
 PRINT_HANDLERS["vmovups"] = mov_print_handler
 PRINT_HANDLERS["vmovapd"] = mov_print_handler
