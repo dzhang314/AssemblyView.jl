@@ -84,8 +84,7 @@ AssemblyInstruction(instruction, operands) =
 
 function parse_assembly_operand(op::AbstractString)
     op = strip(op)
-    op_lower = lowercase(op)
-    if any(op_lower == reg_name for reg_name in X86_REGISTER_NAMES)
+    if any(op == reg_name for reg_name in X86_REGISTER_NAMES)
         return AssemblyRegister(op)
     end
     mem_op_match = match(r"([a-z]+) ptr \[(.*)\]", op)
@@ -183,15 +182,15 @@ function mov_print_handler(io::IO, instr::AssemblyInstruction)
     assert_num_operands(instr, 2)
     dst, src = instr.operands
     print(io, '\t')
-    if isa(dst, AssemblyRegister)
+    if dst isa AssemblyRegister
         print(io, dst.name)
-    elseif isa(dst, AssemblyMemoryOperand)
+    elseif dst isa AssemblyMemoryOperand
         print(io, "*(", dst.address, ")")
     else
         @assert false "mov destination must be register or memory"
     end
     print(io, " = ")
-    if isa(src, AssemblyMemoryOperand)
+    if src isa AssemblyMemoryOperand
         print(io, "*(", src.address, ")")
     else
         print_asm(io, src)
@@ -209,8 +208,8 @@ PRINT_HANDLERS["vmovupd"] = mov_print_handler
 function lea_print_handler(io::IO, instr::AssemblyInstruction)
     assert_num_operands(instr, 2)
     dst, src = instr.operands
-    @assert isa(dst, AssemblyRegister)
-    @assert isa(src, AssemblyImmediate)
+    @assert dst isa AssemblyRegister
+    @assert src isa AssemblyImmediate
     @assert startswith(src.value, '[')
     @assert endswith(src.value, ']')
     println(io, '\t', dst.name, " = ", src.value[2:end-1], ';')
@@ -221,17 +220,18 @@ PRINT_HANDLERS["lea"] = lea_print_handler
 function jmp_print_handler(io::IO, instr::AssemblyInstruction)
     assert_num_operands(instr, 1)
     dst = instr.operands[1]
-    @assert isa(dst, AssemblyImmediate)
+    @assert dst isa AssemblyImmediate
     println(io, "\tgoto ", dst.value, ';')
 end
 
 PRINT_HANDLERS["jmp"] = jmp_print_handler
 
-function nop_print_handler(::IO, ::AssemblyInstruction) end
+function ret_print_handler(io::IO, instr::AssemblyInstruction)
+    assert_num_operands(instr, 0)
+    println(io, "\treturn;")
+end
 
-PRINT_HANDLERS["nop"       ] = nop_print_handler
-PRINT_HANDLERS["ud2"       ] = nop_print_handler
-PRINT_HANDLERS["vzeroupper"] = nop_print_handler
+PRINT_HANDLERS["ret"] = ret_print_handler
 
 function unknown_print_handler(io::IO, instr::AssemblyInstruction)
     print(io, '\t', rpad('{' * instr.instruction * '}', 16))
@@ -266,7 +266,7 @@ function println_asm(io::IO, instr::AssemblyInstruction)::Bool
             PRINT_HANDLERS[instr_lower](io, instr)
             return true
         catch e
-            if isa(e, AssertionError)
+            if e isa AssertionError
                 unknown_print_handler(io, instr)
                 return false
             else
@@ -281,8 +281,54 @@ end
 
 ################################################################################
 
+is_instr(stmt::AssemblyStatement, instr::AbstractString)::Bool =
+    (stmt isa AssemblyInstruction) && (stmt.instruction == instr)
+
+function remove_nops(stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
+    result = AssemblyStatement[]
+    for stmt in stmts
+        if all(!is_instr(stmt, nop) for nop in ["nop", "vzeroupper", "ud2"])
+            push!(result, stmt)
+        end
+    end
+    return result
+end
+
+function remove_prologue_epilogue(stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
+    @assert is_instr(stmts[1], "push")
+    @assert length(stmts[1].operands) == 1
+    @assert stmts[1].operands[1] == AssemblyRegister("rbp")
+    @assert is_instr(stmts[2], "mov")
+    @assert stmts[2].operands == [AssemblyRegister("rbp"), AssemblyRegister("rsp")]
+    prologue_len = 3
+    while is_instr(stmts[prologue_len], "push")
+        prologue_len += 1
+    end
+    prologue_len -= 1
+    saved_regs = [AssemblyRegister("rbp")]
+    for j = 3 : prologue_len
+        @assert length(stmts[j].operands) == 1
+        @assert stmts[j].operands[1] isa AssemblyRegister
+        push!(saved_regs, stmts[j].operands[1])
+    end
+    reverse!(saved_regs)
+    ret_indices = [i for i = 1 : length(stmts) if is_instr(stmts[i], "ret")]
+    for i in ret_indices
+        epilogue = stmts[i-length(saved_regs) : i-1]
+        for (stmt, reg) in zip(epilogue, saved_regs)
+            @assert is_instr(stmt, "pop")
+            @assert length(stmt.operands) == 1
+            @assert stmt.operands[1] == reg
+        end
+    end
+    return deleteat!(copy(stmts),
+        vcat(1:prologue_len, [i-length(saved_regs) : i-1 for i in ret_indices]...))
+end
+
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     parsed_stmts = parsed_asm(func, types...)
+    parsed_stmts = remove_nops(parsed_stmts)
+    parsed_stmts = remove_prologue_epilogue(parsed_stmts)
     for stmt in parsed_stmts
         println_asm(io, stmt)
     end
