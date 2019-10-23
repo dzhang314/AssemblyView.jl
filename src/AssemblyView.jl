@@ -1,6 +1,9 @@
 module AssemblyView
 
-export parsed_asm, asm_offsets, view_asm
+export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
+    AssemblyImmediate, AssemblyOffset, AssemblyStatement, AssemblyComment,
+    AssemblyLabel, AssemblyInstruction,
+    parsed_asm, asm_offsets, view_asm
 
 ################################################################################
 
@@ -396,7 +399,9 @@ end
 
 function remove_prologue_epilogue(
         stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
-    @assert is_instr(stmts[1], "push")
+    if (length(stmts) == 0) || !is_instr(stmts[1], "push")
+        return copy(stmts)
+    end
     @assert length(stmts[1].operands) == 1
     @assert stmts[1].operands[1] == AssemblyRegister("rbp")
     @assert is_instr(stmts[2], "mov")
@@ -430,7 +435,14 @@ end
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     parsed_stmts = parsed_asm(func, types...)
     parsed_stmts = remove_nops(parsed_stmts)
-    parsed_stmts = remove_prologue_epilogue(parsed_stmts)
+    try
+        parsed_stmts = remove_prologue_epilogue(parsed_stmts)
+    catch e
+        if !(e isa AssertionError)
+            rethrow(e)
+        end
+        @warn "Failed to remove prologue and epilogue from function $func"
+    end
     for stmt in parsed_stmts
         println_asm(io, stmt)
     end
