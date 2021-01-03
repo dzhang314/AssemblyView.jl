@@ -113,17 +113,21 @@ function parse_assembly_statement(stmt::AbstractString)
     # tabs separate major parts of an instruction
     tokens = split(stmt, '\t')
     # if the line does not begin with a tab, it is a label
-    if (length(tokens) == 1) && endswith(tokens[1], ':')
+    if length(tokens) == 1
+        @assert endswith(tokens[1], ':')
         label_name = tokens[1][1:end-1]
         @assert !isempty(label_name)
         return AssemblyLabel(label_name)
     # if the line does begin with a tab, it is an instruction
-    elseif (length(tokens) > 1) && isempty(tokens[1])
+    else
+        @assert length(tokens) > 1
+        @assert isempty(tokens[1])
         # if there is no second tab, then the instruction takes no operands
         if length(tokens) == 2
             return AssemblyInstruction(tokens[2])
         # if there is a second tab, then the instruction operands follow it
-        elseif length(tokens) == 3
+        else
+            @assert length(tokens) == 3
             # some instructions are output with a #-delimited comment
             arg_tokens = split(tokens[3], " # ")
             if length(arg_tokens) == 1
