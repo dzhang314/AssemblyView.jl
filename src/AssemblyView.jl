@@ -40,6 +40,13 @@ const X86_REGISTER_NAMES = [
 ]
 
 
+const X86_IGNORED_OPCODES = [
+    "nop",
+    "vzeroupper",
+    "ud2",
+]
+
+
 ################################################################################
 
 
@@ -97,7 +104,7 @@ Base.print(io::IO, label::AssemblyLabel) = print(io, label.name, ':')
 
 
 struct AssemblyInstruction <: AssemblyStatement
-    instruction::String
+    opcode::String
     operands::Vector{AssemblyOperand}
     comment::String
 end
@@ -109,13 +116,21 @@ AssemblyInstruction(instruction::AbstractString,
                     operands::Vector{T}) where {T <: AssemblyOperand} =
     AssemblyInstruction(String(instruction), operands, "")
 
+
 const PRINT_HANDLERS = Dict{String,Function}()
 
 function Base.print(io::IO, instr::AssemblyInstruction)
-    if haskey(PRINT_HANDLERS, instr.instruction)
-        PRINT_HANDLERS[instr.instruction](io, instr)
+    if haskey(PRINT_HANDLERS, instr.opcode)
+        PRINT_HANDLERS[instr.opcode](io, instr)
     else
-        generic_print_handler(io, instr)
+        print(io, rpad('{' * instr.opcode * '}', 16))
+        for (i, op) in enumerate(instr.operands)
+            (i > 1) && print(io, ", ")
+            print(io, op)
+        end
+        if !isempty(instr.comment)
+            print(io, " // ", instr.comment)
+        end
     end
     return nothing
 end
@@ -248,33 +263,27 @@ end
 
 ################################################################################
 
-const INSTRUCTION_PREFIX = "\t"
-const INSTRUCTION_SUFFIX = ";"
-
-function generic_print_handler(io::IO, instr::AssemblyInstruction)
-    print(io, rpad('{' * instr.instruction * '}', 16))
-    for (i, op) in enumerate(instr.operands)
-        (i > 1) && print(io, ", ")
-        print(io, op)
-    end
-    if !isempty(instr.comment)
-        print(io, " // ", instr.comment)
-    end
-end
 
 function assert_num_operands(instr::AssemblyInstruction, n::Int)
     if length(instr.operands) != n
         throw(AssertionError("AssemblyView.jl INTERNAL ERROR: Encountered" *
-                             " $(instr.instruction) instruction with wrong" *
+                             " $(instr.opcode) instruction with wrong" *
                              " number of operands (expected $n; found" *
                              " $(length(instr.operands)))."))
     end
 end
 
+
+for opcode in X86_IGNORED_OPCODES
+    PRINT_HANDLERS[opcode] = (io::IO, instr::AssemblyInstruction) -> print(io)
+end
+
+
 PRINT_HANDLERS["ret"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 0)
     print(io, "return")
 end
+
 
 PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 1)
@@ -282,6 +291,7 @@ PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
     @assert label isa Union{AssemblyImmediate, AssemblyMemoryOperand}
     print(io, "goto $label")
 end
+
 
 PRINT_HANDLERS["mov"] =
 PRINT_HANDLERS["movabs"] =
@@ -292,6 +302,7 @@ PRINT_HANDLERS["vmovsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     print(io, "$dst = $src")
 end
 
+
 PRINT_HANDLERS["vmovups"] =
 PRINT_HANDLERS["vmovupd"] =
 PRINT_HANDLERS["vmovdqu"] = (io::IO, instr::AssemblyInstruction) -> begin
@@ -299,6 +310,7 @@ PRINT_HANDLERS["vmovdqu"] = (io::IO, instr::AssemblyInstruction) -> begin
     dst, src = instr.operands
     print(io, "$dst .= $src")
 end
+
 
 PRINT_HANDLERS["vmovaps"] =
 PRINT_HANDLERS["vmovapd"] =
@@ -308,11 +320,19 @@ PRINT_HANDLERS["vmovdqa"] = (io::IO, instr::AssemblyInstruction) -> begin
     print(io, "$dst .= $src [aligned]")
 end
 
+
 PRINT_HANDLERS["inc"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 1)
     dst = instr.operands[1]
     print(io, "$dst++")
 end
+
+PRINT_HANDLERS["dec"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 1)
+    dst = instr.operands[1]
+    print(io, "$dst--")
+end
+
 
 PRINT_HANDLERS["add"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 2)
@@ -325,6 +345,7 @@ PRINT_HANDLERS["sub"] = (io::IO, instr::AssemblyInstruction) -> begin
     dst, src = instr.operands
     print(io, "$dst -= $src")
 end
+
 
 PRINT_HANDLERS["vaddsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
@@ -372,12 +393,24 @@ PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     end
 end
 
+
+function verbatim_print_hander(io::IO, instr::AssemblyInstruction)
+    assert_num_operands(instr, 1)
+    print(io, instr.opcode, ' ', instr.operands[1])
+end
+
+PRINT_HANDLERS["push"] =
+PRINT_HANDLERS["pop"] = 
+PRINT_HANDLERS["call"] = verbatim_print_hander
+
+
 function comment_print_handler(io::IO, instr::AssemblyInstruction)
     @assert !isempty(instr.comment)
     print(io, instr.comment)
 end
 
 PRINT_HANDLERS["vpermilpd"] = comment_print_handler
+
 
 function comment_double_print_handler(io::IO, instr::AssemblyInstruction)
     @assert !isempty(instr.comment)
@@ -394,9 +427,6 @@ PRINT_HANDLERS["vfmsub213pd"] =
 PRINT_HANDLERS["vfmsub132sd"] =
 PRINT_HANDLERS["vfnmsub213sd"] = comment_double_print_handler
 
-PRINT_HANDLERS["nop"] =
-PRINT_HANDLERS["vzeroupper"] =
-PRINT_HANDLERS["ud2"] = (io::IO, instr::AssemblyInstruction) -> print(io)
 
 PRINT_HANDLERS["lea"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 2)
@@ -408,57 +438,38 @@ PRINT_HANDLERS["lea"] = (io::IO, instr::AssemblyInstruction) -> begin
     print(io, "$dst = $(src.value[2:end-1])")
 end
 
-# function lea_print_handler(io::IO, instr::AssemblyInstruction)
-#     assert_num_operands(instr, 2)
-#     dst, src = instr.operands
-#     @assert dst isa AssemblyRegister
-#     @assert src isa AssemblyImmediate
-#     @assert startswith(src.value, '[')
-#     @assert endswith(src.value, ']')
-#     println(io, '\t', dst.name, " = ", src.value[2:end-1], ';')
-# end
-
-# PRINT_HANDLERS["lea"] = lea_print_handler
-
-# function jmp_print_handler(io::IO, instr::AssemblyInstruction)
-#     assert_num_operands(instr, 1)
-#     dst = instr.operands[1]
-#     @assert dst isa AssemblyImmediate
-#     println(io, "\tgoto ", dst.value, ';')
-# end
-
-# PRINT_HANDLERS["jmp"] = jmp_print_handler
 
 ################################################################################
 
-################################################################################
 
-is_instr(stmt::AssemblyStatement, instr::AbstractString)::Bool =
-    (stmt isa AssemblyInstruction) && (stmt.instruction == instr)
+is_opcode(stmt::AssemblyStatement, instr::AbstractString)::Bool =
+    (stmt isa AssemblyInstruction) && (stmt.opcode == instr)
+
 
 function remove_nops(
         stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
     result = AssemblyStatement[]
     for stmt in stmts
-        if all(!is_instr(stmt, nop) for nop in ["nop", "vzeroupper", "ud2"])
+        if all(!is_opcode(stmt, nop) for nop in X86_IGNORED_OPCODES)
             push!(result, stmt)
         end
     end
     return result
 end
 
+
 function remove_prologue_epilogue(
         stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
-    if (length(stmts) == 0) || !is_instr(stmts[1], "push")
+    if (length(stmts) == 0) || !is_opcode(stmts[1], "push")
         return copy(stmts)
     end
     @assert length(stmts[1].operands) == 1
     @assert stmts[1].operands[1] == AssemblyRegister("rbp")
-    @assert is_instr(stmts[2], "mov")
+    @assert is_opcode(stmts[2], "mov")
     @assert stmts[2].operands == [AssemblyRegister("rbp"),
                                   AssemblyRegister("rsp")]
     prologue_len = 3
-    while is_instr(stmts[prologue_len], "push")
+    while is_opcode(stmts[prologue_len], "push")
         prologue_len += 1
     end
     prologue_len -= 1
@@ -469,11 +480,11 @@ function remove_prologue_epilogue(
         push!(saved_regs, stmts[j].operands[1])
     end
     reverse!(saved_regs)
-    ret_indices = [i for i = 1 : length(stmts) if is_instr(stmts[i], "ret")]
+    ret_indices = [i for i = 1 : length(stmts) if is_opcode(stmts[i], "ret")]
     for i in ret_indices
         epilogue = stmts[i-length(saved_regs) : i-1]
         for (stmt, reg) in zip(epilogue, saved_regs)
-            @assert is_instr(stmt, "pop")
+            @assert is_opcode(stmt, "pop")
             @assert length(stmt.operands) == 1
             @assert stmt.operands[1] == reg
         end
@@ -482,9 +493,14 @@ function remove_prologue_epilogue(
         [i-length(saved_regs) : i-1 for i in ret_indices]...))
 end
 
+
+const INSTRUCTION_PREFIX = "\t"
+const INSTRUCTION_SUFFIX = ";"
+
+
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     parsed_stmts = parsed_asm(func, types...)
-    # parsed_stmts = remove_nops(parsed_stmts)
+    parsed_stmts = remove_nops(parsed_stmts)
     try
         # parsed_stmts = remove_prologue_epilogue(parsed_stmts)
     catch e
@@ -502,7 +518,9 @@ function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     end
 end
 
+
 view_asm(@nospecialize(func), @nospecialize(types...))::Nothing =
     view_asm(stdout, func, types...)
+
 
 end # module AssemblyView
