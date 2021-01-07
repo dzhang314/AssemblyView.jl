@@ -460,37 +460,89 @@ end
 
 function remove_prologue_epilogue(
         stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
-    if (length(stmts) == 0) || !is_opcode(stmts[1], "push")
+
+    # Check whether the first two instructions are:
+    #     push rbp
+    #     mov rbp, rsp
+    # Exit early if this is not the case.
+    if ((length(stmts) < 2)
+        || !is_opcode(stmts[1], "push")
+        || (length(stmts[1].operands) != 1)
+        || (stmts[1].operands[1] != AssemblyRegister("rbp"))
+        || !is_opcode(stmts[2], "mov")
+        || (stmts[2].operands != [AssemblyRegister("rbp"),
+                                  AssemblyRegister("rsp")]))
         return copy(stmts)
     end
-    @assert length(stmts[1].operands) == 1
-    @assert stmts[1].operands[1] == AssemblyRegister("rbp")
-    @assert is_opcode(stmts[2], "mov")
-    @assert stmts[2].operands == [AssemblyRegister("rbp"),
-                                  AssemblyRegister("rsp")]
+
+    # At this point, we know we have at least two prologue instructions.
+    # The rest of the prologue consists of "push register" instructions...
     prologue_len = 3
-    while is_opcode(stmts[prologue_len], "push")
+    saved_regs = [AssemblyRegister("rbp")]
+    while ((prologue_len <= length(stmts))
+           && is_opcode(stmts[prologue_len], "push")
+           && (length(stmts[prologue_len].operands) == 1)
+           && (stmts[prologue_len].operands[1] isa AssemblyRegister))
+        push!(saved_regs, stmts[prologue_len].operands[1])
         prologue_len += 1
     end
-    prologue_len -= 1
-    saved_regs = [AssemblyRegister("rbp")]
-    for j = 3 : prologue_len
-        @assert length(stmts[j].operands) == 1
-        @assert stmts[j].operands[1] isa AssemblyRegister
-        push!(saved_regs, stmts[j].operands[1])
-    end
     reverse!(saved_regs)
+
+    # ...possibly followed by "add/sub rsp, immediate".
+    if ((prologue_len <= length(stmts))
+        && (is_opcode(stmts[prologue_len], "add")
+            || is_opcode(stmts[prologue_len], "sub"))
+        && (length(stmts[prologue_len].operands) == 2)
+        && (stmts[prologue_len].operands[1] isa AssemblyRegister)
+        && (stmts[prologue_len].operands[1].name == "rsp")
+        && (stmts[prologue_len].operands[2] isa AssemblyImmediate))
+    else
+        prologue_len -= 1
+    end
+
+    # Delete all prologue instructions.
+    deletion_indices = collect(1 : prologue_len)
+
+    # To identify the epilogue, we search for all occurences of "ret".
     ret_indices = [i for i = 1 : length(stmts) if is_opcode(stmts[i], "ret")]
+
+    # We scan backwards from each occurrence, looking for a sequence of "pop"
+    # instructions that matches the "push" sequence from the prologue.
     for i in ret_indices
         epilogue = stmts[i-length(saved_regs) : i-1]
         for (stmt, reg) in zip(epilogue, saved_regs)
-            @assert is_opcode(stmt, "pop")
-            @assert length(stmt.operands) == 1
-            @assert stmt.operands[1] == reg
+            if (!is_opcode(stmt, "pop")
+                || (length(stmt.operands) != 1)
+                || (stmt.operands[1] != reg))
+                return copy(stmts)
+            end
+        end
+
+        # As before, the epilogue might optionally be prefixed with an
+        # "add/sub rsp, immediate" instruction. Delete this if it exists.
+        j = i - length(saved_regs) - 1
+        if ((j > 0)
+            && (is_opcode(stmts[j], "add")
+                || is_opcode(stmts[j], "sub"))
+            && (length(stmts[j].operands) == 2)
+            && (stmts[j].operands[1] isa AssemblyRegister)
+            && (stmts[j].operands[1].name == "rsp")
+            && (stmts[j].operands[2] isa AssemblyImmediate))
+            append!(deletion_indices, j : i-1)
+        elseif ((j > 0)
+                && (is_opcode(stmts[j], "lea"))
+                && (length(stmts[j].operands) == 2)
+                && (stmts[j].operands[1] isa AssemblyRegister)
+                && (stmts[j].operands[1].name == "rsp")
+                && (stmts[j].operands[2] isa AssemblyImmediate)
+                && startswith(stmts[j].operands[2].value, "[rbp"))
+            append!(deletion_indices, j : i-1)
+        else
+            append!(deletion_indices, j+1 : i-1)
         end
     end
-    return deleteat!(copy(stmts), vcat(1:prologue_len,
-        [i-length(saved_regs) : i-1 for i in ret_indices]...))
+
+    return deleteat!(copy(stmts), deletion_indices)
 end
 
 
@@ -499,23 +551,39 @@ const INSTRUCTION_SUFFIX = ";"
 
 
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
+
     parsed_stmts = parsed_asm(func, types...)
     parsed_stmts = remove_nops(parsed_stmts)
-    try
-        # parsed_stmts = remove_prologue_epilogue(parsed_stmts)
-    catch e
-        if !(e isa AssertionError)
-            rethrow(e)
-        end
-        @warn "Failed to remove prologue and epilogue from function $func"
-    end
+    parsed_stmts = remove_prologue_epilogue(parsed_stmts)
+
+    unknown_opcodes = Dict{String,Int}()
     for stmt in parsed_stmts
         if stmt isa AssemblyInstruction
             println(io, INSTRUCTION_PREFIX, stmt, INSTRUCTION_SUFFIX)
+            if !haskey(PRINT_HANDLERS, stmt.opcode)
+                if haskey(unknown_opcodes, stmt.opcode)
+                    unknown_opcodes[stmt.opcode] += 1
+                else
+                    unknown_opcodes[stmt.opcode] = 1
+                end
+            end
         else
             println(io, stmt)
         end
     end
+
+    frequency_table = [(count, opcode) for (opcode, count) in unknown_opcodes]
+    sort!(frequency_table, rev=true)
+
+    if !isempty(frequency_table)
+        println(io)
+        println(io, "Unknown opcodes:")
+        for (count, opcode) in frequency_table
+            println(io, INSTRUCTION_PREFIX, "$opcode ($count occurrences)")
+        end
+    end
+
+    println(io)
 end
 
 
