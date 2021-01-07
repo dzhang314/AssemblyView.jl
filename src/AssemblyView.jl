@@ -5,11 +5,11 @@ export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
     AssemblyLabel, AssemblyInstruction,
     parsed_asm, asm_offsets, view_asm
 
-################################################################################
-
 using InteractiveUtils: _dump_function
 
+
 ################################################################################
+
 
 const X86_REGISTER_NAMES = [
     "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
@@ -39,38 +39,62 @@ const X86_REGISTER_NAMES = [
     "zmm30", "ymm30", "xmm30", "zmm31", "ymm31", "xmm31",
 ]
 
+
 ################################################################################
 
+
 abstract type AssemblyOperand end
+
 
 struct AssemblyRegister <: AssemblyOperand
     name::String
 end
+
+Base.print(io::IO, reg::AssemblyRegister) = print(io, reg.name)
+
 
 struct AssemblyMemoryOperand <: AssemblyOperand
     type::String
     address::String
 end
 
+Base.print(io::IO, mem::AssemblyMemoryOperand) =
+    print(io, "*($(mem.address))")
+
+
 struct AssemblyImmediate <: AssemblyOperand
     value::String
 end
+
+Base.print(io::IO, imm::AssemblyImmediate) = print(io, imm.value)
+
 
 struct AssemblyOffset <: AssemblyOperand
     name::String
 end
 
+Base.print(io::IO, off::AssemblyOffset) = print(io, "offset ", off.name)
+
+
 ################################################################################
 
+
 abstract type AssemblyStatement end
+
 
 struct AssemblyComment <: AssemblyStatement
     contents::String
 end
 
+Base.print(io::IO, comment::AssemblyComment) = print(io, comment.contents)
+
+
 struct AssemblyLabel <: AssemblyStatement
     name::String
 end
+
+Base.print(io::IO, label::AssemblyLabel) = print(io, label.name, ':')
+
 
 struct AssemblyInstruction <: AssemblyStatement
     instruction::String
@@ -78,12 +102,27 @@ struct AssemblyInstruction <: AssemblyStatement
     comment::String
 end
 
-AssemblyInstruction(instruction) =
-    AssemblyInstruction(instruction, AssemblyOperand[], "")
-AssemblyInstruction(instruction, operands) =
-    AssemblyInstruction(instruction, operands, "")
+AssemblyInstruction(instruction::AbstractString) =
+    AssemblyInstruction(String(instruction), AssemblyOperand[], "")
+
+AssemblyInstruction(instruction::AbstractString,
+                    operands::Vector{T}) where {T <: AssemblyOperand} =
+    AssemblyInstruction(String(instruction), operands, "")
+
+const PRINT_HANDLERS = Dict{String,Function}()
+
+function Base.print(io::IO, instr::AssemblyInstruction)
+    if haskey(PRINT_HANDLERS, instr.instruction)
+        PRINT_HANDLERS[instr.instruction](io, instr)
+    else
+        generic_print_handler(io, instr)
+    end
+    return nothing
+end
+
 
 ################################################################################
+
 
 function parse_assembly_operand(op::AbstractString)
     op = strip(op)
@@ -98,59 +137,75 @@ function parse_assembly_operand(op::AbstractString)
     if !isnothing(offset_match)
         return AssemblyOffset(offset_match[1])
     end
-    # TODO: Figure out how to parse immediates
+    # TODO: How to parse immediates?
     return AssemblyImmediate(op)
 end
 
+
 function parse_assembly_statement(stmt::AbstractString)
-    # return early for comments and empty lines
-    if startswith(strip(stmt), ';')
-        return AssemblyComment(stmt)
-    end
+
+    # Return nothing for non-statements.
     if (stmt == "\t.text") || isempty(strip(stmt))
         return nothing
     end
-    # tabs separate major parts of an instruction
+
+    # Assembly comments begin with a semicolon.
+    if startswith(strip(stmt), ';')
+        return AssemblyComment(stmt)
+    end
+
+    # Tabs separate parts of an assembly statement.
     tokens = split(stmt, '\t')
-    # if the line does not begin with a tab, it is a label
+
+    # If the statement contains no tabs, then it is a label.
     if length(tokens) == 1
         @assert endswith(tokens[1], ':')
         label_name = tokens[1][1:end-1]
         @assert !isempty(label_name)
         return AssemblyLabel(label_name)
-    # if the line does begin with a tab, it is an instruction
+
+    # If the statement begins with a tab, then it is an instruction.
     else
         @assert length(tokens) > 1
         @assert isempty(tokens[1])
-        # if there is no second tab, then the instruction takes no operands
+
+        # If there is no second tab, then the instruction takes no operands.
         if length(tokens) == 2
             return AssemblyInstruction(tokens[2])
-        # if there is a second tab, then the instruction operands follow it
+
+        # If there is a second tab, then the instruction operands follow it.
         else
             @assert length(tokens) == 3
-            # some instructions are output with a #-delimited comment
+
+            # Some instructions are output with a #-delimited comment.
             arg_tokens = split(tokens[3], " # ")
             if length(arg_tokens) == 1
                 return AssemblyInstruction(tokens[2],
                     parse_assembly_operand.(split(arg_tokens[1], ',')))
-            elseif length(arg_tokens) == 2
+            else
+                @assert length(arg_tokens) == 2
                 return AssemblyInstruction(tokens[2],
                     parse_assembly_operand.(split(arg_tokens[1], ',')),
                     strip(arg_tokens[2]))
             end
         end
     end
-    error("cannot parse assembly statement: ", stmt)
+
+    error("AssemblyView.jl INTERNAL ERROR: Unable to parse" *
+          " assembly statement <<<$stmt>>>.")
 end
 
-################################################################################
 
 function parsed_asm(@nospecialize(func), @nospecialize(types...);
-        keep_comments::Bool=false)::Vector{AssemblyStatement}
+                    keep_comments::Bool=false)::Vector{AssemblyStatement}
+
+    # Support either a tuple of argument types or varargs.
     if (length(types) == 1) && !(types[1] isa Type)
         types = types[1]
     end
-    stmts = split(_dump_function(func, types,
+
+    # Call internal Julia API to generate x86 assembly code.
+    code = _dump_function(func, types,
         true,   # Generate native code (as opposed to LLVM IR).
         false,  # Don't generate wrapper code.
         true,   # (strip_ir_metadata) Ignored when dumping native code.
@@ -158,19 +213,21 @@ function parsed_asm(@nospecialize(func), @nospecialize(types...);
         :intel, # I prefer Intel assembly syntax.
         true,   # (optimize) Ignored when dumping native code.
         :source # TODO: What does debuginfo=:source mean?
-    ), '\n')
-    parsed_stmts = AssemblyStatement[]
-    for stmt in stmts
+    )
+
+    # Parse each line of code, discarding comments if requested.
+    result = AssemblyStatement[]
+    for stmt in split(code, '\n')
         parsed_stmt = parse_assembly_statement(stmt)
         if !isnothing(parsed_stmt) && (keep_comments ||
                                        !(parsed_stmt isa AssemblyComment))
-            push!(parsed_stmts, parsed_stmt)
+            push!(result, parsed_stmt)
         end
     end
-    return parsed_stmts
+
+    return result
 end
 
-################################################################################
 
 function asm_offsets(
         @nospecialize(func), @nospecialize(types...))::Vector{String}
@@ -188,202 +245,191 @@ function asm_offsets(
     return result
 end
 
-################################################################################
-
-print_asm(io::IO, reg::AssemblyRegister) = print(io, reg.name)
-print_asm(io::IO, memop::AssemblyMemoryOperand) =
-    print(io, "*(($(memop.type) *) ($(memop.address)))")
-print_asm(io::IO, immed::AssemblyImmediate) = print(io, immed.value)
-print_asm(io::IO, offset::AssemblyOffset) = print(io, "offset ", offset.name)
 
 ################################################################################
 
-const PRINT_HANDLERS = Dict{String,Function}()
+const INSTRUCTION_PREFIX = "\t"
+const INSTRUCTION_SUFFIX = ";"
+
+function generic_print_handler(io::IO, instr::AssemblyInstruction)
+    print(io, rpad('{' * instr.instruction * '}', 16))
+    for (i, op) in enumerate(instr.operands)
+        (i > 1) && print(io, ", ")
+        print(io, op)
+    end
+    if !isempty(instr.comment)
+        print(io, " // ", instr.comment)
+    end
+end
 
 function assert_num_operands(instr::AssemblyInstruction, n::Int)
     if length(instr.operands) != n
-        throw(AssertionError("wrong number of operands"))
+        throw(AssertionError("AssemblyView.jl INTERNAL ERROR: Encountered" *
+                             " $(instr.instruction) instruction with wrong" *
+                             " number of operands (expected $n; found" *
+                             " $(length(instr.operands)))."))
     end
 end
 
-function mov_print_handler(io::IO, instr::AssemblyInstruction)
+PRINT_HANDLERS["ret"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 0)
+    print(io, "return")
+end
+
+PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 1)
+    label = instr.operands[1]
+    @assert label isa Union{AssemblyImmediate, AssemblyMemoryOperand}
+    print(io, "goto $label")
+end
+
+PRINT_HANDLERS["mov"] =
+PRINT_HANDLERS["movabs"] =
+PRINT_HANDLERS["vmovss"] =
+PRINT_HANDLERS["vmovsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 2)
     dst, src = instr.operands
-    print(io, '\t')
-    if dst isa AssemblyRegister
-        print(io, dst.name)
-    elseif dst isa AssemblyMemoryOperand
-        print(io, "*(", dst.address, ")")
-    else
-        @assert false "mov destination must be register or memory"
-    end
-    print(io, " = ")
-    if src isa AssemblyMemoryOperand
-        print(io, "*(", src.address, ")")
-    else
-        print_asm(io, src)
-    end
-    println(io, ';')
+    print(io, "$dst = $src")
 end
 
-PRINT_HANDLERS["mov"    ] = mov_print_handler
-PRINT_HANDLERS["movabs" ] = mov_print_handler
-PRINT_HANDLERS["vmovss" ] = mov_print_handler
-PRINT_HANDLERS["vmovsd" ] = mov_print_handler
-PRINT_HANDLERS["vmovaps"] = mov_print_handler
-PRINT_HANDLERS["vmovups"] = mov_print_handler
-PRINT_HANDLERS["vmovapd"] = mov_print_handler
-PRINT_HANDLERS["vmovupd"] = mov_print_handler
+PRINT_HANDLERS["vmovups"] =
+PRINT_HANDLERS["vmovupd"] =
+PRINT_HANDLERS["vmovdqu"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst .= $src")
+end
 
-function lea_print_handler(io::IO, instr::AssemblyInstruction)
+PRINT_HANDLERS["vmovaps"] =
+PRINT_HANDLERS["vmovapd"] =
+PRINT_HANDLERS["vmovdqa"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst .= $src [aligned]")
+end
+
+PRINT_HANDLERS["inc"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 1)
+    dst = instr.operands[1]
+    print(io, "$dst++")
+end
+
+PRINT_HANDLERS["add"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst += $src")
+end
+
+PRINT_HANDLERS["sub"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst -= $src")
+end
+
+PRINT_HANDLERS["vaddsd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = (double) $a + $b")
+end
+
+PRINT_HANDLERS["vaddpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst .= (double) $a .+ $b")
+end
+
+PRINT_HANDLERS["vsubsd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = (double) $a - $b")
+end
+
+PRINT_HANDLERS["vsubpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst .= (double) $a .- $b")
+end
+
+PRINT_HANDLERS["vmulsd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = (double) $a * $b")
+end
+
+PRINT_HANDLERS["vmulpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst .= (double) $a .* $b")
+end
+
+PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    if a == b
+        print(io, "$dst .= 0")
+    else
+        print(io, "$dst .= $a .^ $b")
+    end
+end
+
+function comment_print_handler(io::IO, instr::AssemblyInstruction)
+    @assert !isempty(instr.comment)
+    print(io, instr.comment)
+end
+
+PRINT_HANDLERS["vpermilpd"] = comment_print_handler
+
+function comment_double_print_handler(io::IO, instr::AssemblyInstruction)
+    @assert !isempty(instr.comment)
+    parts = split(instr.comment, " = ")
+    @assert length(parts) == 2
+    lhs, rhs = parts
+    print(io, "$lhs = (double) $rhs")
+end
+
+PRINT_HANDLERS["vfmadd231sd"] =
+PRINT_HANDLERS["vfmadd231pd"] =
+PRINT_HANDLERS["vfmsub213sd"] =
+PRINT_HANDLERS["vfmsub213pd"] =
+PRINT_HANDLERS["vfmsub132sd"] =
+PRINT_HANDLERS["vfnmsub213sd"] = comment_double_print_handler
+
+PRINT_HANDLERS["nop"] =
+PRINT_HANDLERS["vzeroupper"] =
+PRINT_HANDLERS["ud2"] = (io::IO, instr::AssemblyInstruction) -> print(io)
+
+PRINT_HANDLERS["lea"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 2)
     dst, src = instr.operands
     @assert dst isa AssemblyRegister
     @assert src isa AssemblyImmediate
     @assert startswith(src.value, '[')
     @assert endswith(src.value, ']')
-    println(io, '\t', dst.name, " = ", src.value[2:end-1], ';')
+    print(io, "$dst = $(src.value[2:end-1])")
 end
 
-PRINT_HANDLERS["lea"] = lea_print_handler
+# function lea_print_handler(io::IO, instr::AssemblyInstruction)
+#     assert_num_operands(instr, 2)
+#     dst, src = instr.operands
+#     @assert dst isa AssemblyRegister
+#     @assert src isa AssemblyImmediate
+#     @assert startswith(src.value, '[')
+#     @assert endswith(src.value, ']')
+#     println(io, '\t', dst.name, " = ", src.value[2:end-1], ';')
+# end
 
-function jmp_print_handler(io::IO, instr::AssemblyInstruction)
-    assert_num_operands(instr, 1)
-    dst = instr.operands[1]
-    @assert dst isa AssemblyImmediate
-    println(io, "\tgoto ", dst.value, ';')
-end
+# PRINT_HANDLERS["lea"] = lea_print_handler
 
-PRINT_HANDLERS["jmp"] = jmp_print_handler
+# function jmp_print_handler(io::IO, instr::AssemblyInstruction)
+#     assert_num_operands(instr, 1)
+#     dst = instr.operands[1]
+#     @assert dst isa AssemblyImmediate
+#     println(io, "\tgoto ", dst.value, ';')
+# end
 
-function ret_print_handler(io::IO, instr::AssemblyInstruction)
-    assert_num_operands(instr, 0)
-    println(io, "\treturn;")
-end
-
-PRINT_HANDLERS["ret"] = ret_print_handler
-
-function xor_print_handler(io::IO, instr::AssemblyInstruction)
-    if length(instr.operands) == 2
-        dst, src = instr.operands
-        if dst == src
-            print(io, '\t')
-            print_asm(io, dst)
-            println(io, " = 0;")
-        else
-            print(io, '\t')
-            print_asm(io, dst)
-            print(io, " ^= ")
-            print_asm(io, src)
-            println(io, ";")
-        end
-    elseif length(instr.operands) == 3
-        dst, src1, src2 = instr.operands
-        if (dst == src1) && (src1 == src2)
-            print(io, '\t')
-            print_asm(io, dst)
-            println(io, " = 0;")
-        else
-            @assert false
-        end
-    else
-        @assert false
-    end
-end
-
-PRINT_HANDLERS["xor"   ] = xor_print_handler
-PRINT_HANDLERS["vxorss"] = xor_print_handler
-PRINT_HANDLERS["vxorsd"] = xor_print_handler
-PRINT_HANDLERS["vxorps"] = xor_print_handler
-PRINT_HANDLERS["vxorpd"] = xor_print_handler
-
-function add_print_handler(io::IO, instr::AssemblyInstruction)
-    if length(instr.operands) == 2
-        dst, src = instr.operands
-        print(io, '\t')
-        print_asm(io, dst)
-        print(io, " += ")
-        print_asm(io, src)
-        println(io, ";")
-    elseif length(instr.operands) == 3
-        dst, src1, src2 = instr.operands
-        if dst == src1
-            print(io, '\t')
-            print_asm(io, dst)
-            print(io, " += ")
-            print_asm(io, src2)
-            println(io, ";")
-        elseif dst == src2
-            print(io, '\t')
-            print_asm(io, dst)
-            print(io, " += ")
-            print_asm(io, src1)
-            println(io, ";")
-        else
-            print(io, '\t')
-            print_asm(io, dst)
-            print(io, " = ")
-            print_asm(io, src1)
-            print(io, " + ")
-            print_asm(io, src2)
-            println(io, ";")
-        end
-    else
-        @assert false
-    end
-end
-
-PRINT_HANDLERS["add"   ] = add_print_handler
-PRINT_HANDLERS["vaddss"] = add_print_handler
-PRINT_HANDLERS["vaddsd"] = add_print_handler
-PRINT_HANDLERS["vaddps"] = add_print_handler
-PRINT_HANDLERS["vaddpd"] = add_print_handler
-
-function unknown_print_handler(io::IO, instr::AssemblyInstruction)
-    print(io, '\t', rpad('{' * instr.instruction * '}', 16))
-    for (i, op) in enumerate(instr.operands)
-        if i > 1
-            print(io, ", ")
-        end
-        print_asm(io, op)
-    end
-    if !isempty(instr.comment)
-        print(io, " // ", instr.comment)
-    end
-    println(io)
-end
+# PRINT_HANDLERS["jmp"] = jmp_print_handler
 
 ################################################################################
-
-function println_asm(io::IO, comment::AssemblyComment)::Bool
-    println(io, comment.contents)
-    return true
-end
-
-function println_asm(io::IO, label::AssemblyLabel)::Bool
-    println(io, label.name, ':')
-    return true
-end
-
-function println_asm(io::IO, instr::AssemblyInstruction)::Bool
-    instr_lower = lowercase(instr.instruction)
-    if haskey(PRINT_HANDLERS, instr_lower)
-        try
-            PRINT_HANDLERS[instr_lower](io, instr)
-            return true
-        catch e
-            if e isa AssertionError
-                unknown_print_handler(io, instr)
-                return false
-            else
-                rethrow(e)
-            end
-        end
-    else
-        unknown_print_handler(io, instr)
-        return false
-    end
-end
 
 ################################################################################
 
@@ -438,9 +484,9 @@ end
 
 function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     parsed_stmts = parsed_asm(func, types...)
-    parsed_stmts = remove_nops(parsed_stmts)
+    # parsed_stmts = remove_nops(parsed_stmts)
     try
-        parsed_stmts = remove_prologue_epilogue(parsed_stmts)
+        # parsed_stmts = remove_prologue_epilogue(parsed_stmts)
     catch e
         if !(e isa AssertionError)
             rethrow(e)
@@ -448,7 +494,11 @@ function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
         @warn "Failed to remove prologue and epilogue from function $func"
     end
     for stmt in parsed_stmts
-        println_asm(io, stmt)
+        if stmt isa AssemblyInstruction
+            println(io, INSTRUCTION_PREFIX, stmt, INSTRUCTION_SUFFIX)
+        else
+            println(io, stmt)
+        end
     end
 end
 
