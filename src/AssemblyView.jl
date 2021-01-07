@@ -8,7 +8,7 @@ export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
 using InteractiveUtils: _dump_function
 
 
-################################################################################
+################################################################# REGISTER NAMES
 
 
 const X86_REGISTER_NAMES = [
@@ -40,7 +40,7 @@ const X86_REGISTER_NAMES = [
 ]
 
 
-################################################################################
+############################################################## ASSEMBLY OPERANDS
 
 
 abstract type AssemblyOperand end
@@ -76,7 +76,7 @@ end
 Base.print(io::IO, off::AssemblyOffset) = print(io, "offset ", off.name)
 
 
-################################################################################
+############################################################ ASSEMBLY STATEMENTS
 
 
 abstract type AssemblyStatement end
@@ -129,7 +129,7 @@ function Base.print(io::IO, instr::AssemblyInstruction)
 end
 
 
-################################################################################
+############################################################### ASSEMBLY PARSING
 
 
 function parse_assembly_operand(op::AbstractString)
@@ -254,7 +254,7 @@ function asm_offsets(
 end
 
 
-################################################################################
+################################################################ PRINT UTILITIES
 
 
 function assert_num_operands(instr::AssemblyInstruction, n::Int)
@@ -568,7 +568,21 @@ PRINT_HANDLERS["vfnmsub213sd"] =
 PRINT_HANDLERS["vfnmsub213pd"] = comment_print_handler
 
 
-################################################################################
+############################################################### COVERAGE TESTING
+
+
+@assert isempty(symdiff(
+    Set{String}(keys(AssemblyView.PRINT_HANDLERS)),
+    union(
+        Set{String}(AssemblyView.X86_IGNORED_OPCODES),
+        Set{String}(AssemblyView.X86_CONTROL_OPCODES),
+        Set{String}(AssemblyView.X86_MOV_OPCODES),
+        Set{String}(AssemblyView.X86_ARITHMETIC_OPCODES),
+    )
+))
+
+
+######################################################### ASSEMBLY PREPROCESSING
 
 
 is_opcode(stmt::AssemblyStatement, instr::AbstractString)::Bool =
@@ -675,6 +689,9 @@ function remove_prologue_epilogue(
 end
 
 
+################################################################ ASSEMBLY OUTPUT
+
+
 const INSTRUCTION_PREFIX = "\t"
 const INSTRUCTION_SUFFIX = ";"
 
@@ -713,6 +730,7 @@ function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     end
 
     println(io)
+    return nothing
 end
 
 
