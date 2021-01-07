@@ -40,13 +40,6 @@ const X86_REGISTER_NAMES = [
 ]
 
 
-const X86_IGNORED_OPCODES = [
-    "nop",
-    "vzeroupper",
-    "ud2",
-]
-
-
 ################################################################################
 
 
@@ -274,9 +267,43 @@ function assert_num_operands(instr::AssemblyInstruction, n::Int)
 end
 
 
+################################################################ IGNORED OPCODES
+
+
+const X86_IGNORED_OPCODES = [
+    "nop",
+    "vzeroupper",
+    "ud2",
+]
+
+
 for opcode in X86_IGNORED_OPCODES
     PRINT_HANDLERS[opcode] = (io::IO, instr::AssemblyInstruction) -> print(io)
 end
+
+
+################################################################ CONTROL OPCODES
+
+
+const X86_CONTROL_OPCODES = [
+    "push",
+    "pop",
+    "call",
+    "ret",
+    "jmp",
+    "cmp",
+    "vucomisd",
+]
+
+
+function verbatim_print_hander(io::IO, instr::AssemblyInstruction)
+    assert_num_operands(instr, 1)
+    print(io, instr.opcode, ' ', instr.operands[1])
+end
+
+PRINT_HANDLERS["push"] =
+PRINT_HANDLERS["pop"] = 
+PRINT_HANDLERS["call"] = verbatim_print_hander
 
 
 PRINT_HANDLERS["ret"] = (io::IO, instr::AssemblyInstruction) -> begin
@@ -293,7 +320,34 @@ PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
 end
 
 
+PRINT_HANDLERS["cmp"] =
+PRINT_HANDLERS["vucomisd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    a, b = instr.operands
+    print(io, "$a <=> $b")
+end
+
+
+#################################################################### MOV OPCODES
+
+
+const X86_MOV_OPCODES = [
+    "mov",
+    "movzx",
+    "movabs",
+    "vmovss",
+    "vmovsd",
+    "vmovups",
+    "vmovupd",
+    "vmovdqu",
+    "vmovaps",
+    "vmovapd",
+    "vmovdqa",
+]
+
+
 PRINT_HANDLERS["mov"] =
+PRINT_HANDLERS["movzx"] =
 PRINT_HANDLERS["movabs"] =
 PRINT_HANDLERS["vmovss"] =
 PRINT_HANDLERS["vmovsd"] = (io::IO, instr::AssemblyInstruction) -> begin
@@ -319,6 +373,48 @@ PRINT_HANDLERS["vmovdqa"] = (io::IO, instr::AssemblyInstruction) -> begin
     dst, src = instr.operands
     print(io, "$dst .= $src [aligned]")
 end
+
+
+############################################################# ARITHMETIC OPCODES
+
+
+const X86_ARITHMETIC_OPCODES = [
+    "inc",
+    "dec",
+    "add",
+    "sub",
+    "and",
+    "andn",
+    "sar",
+    "lea",
+    "vcvtsi2sd",
+    "vaddss",
+    "vaddsd",
+    "vaddps",
+    "vaddpd",
+    "vsubss",
+    "vsubsd",
+    "vsubps",
+    "vsubpd",
+    "vmulss",
+    "vmulsd",
+    "vmulps",
+    "vmulpd",
+    "vdivss",
+    "vdivsd",
+    "vdivps",
+    "vdivpd",
+    "vxorpd",
+    "vpermilpd",
+    "vfmadd231sd",
+    "vfmadd231pd",
+    "vfmsub213sd",
+    "vfmsub213pd",
+    "vfmsub132sd",
+    "vfmsub132pd",
+    "vfnmsub213sd",
+    "vfnmsub213pd",
+]
 
 
 PRINT_HANDLERS["inc"] = (io::IO, instr::AssemblyInstruction) -> begin
@@ -347,41 +443,100 @@ PRINT_HANDLERS["sub"] = (io::IO, instr::AssemblyInstruction) -> begin
 end
 
 
+PRINT_HANDLERS["and"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst &= $src")
+end
+
+PRINT_HANDLERS["andn"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = ~$a & $b")
+end
+
+
+PRINT_HANDLERS["sar"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst >>= $src")
+end
+
+
+PRINT_HANDLERS["lea"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    @assert dst isa AssemblyRegister
+    @assert src isa AssemblyImmediate
+    @assert startswith(src.value, '[')
+    @assert endswith(src.value, ']')
+    print(io, "$dst = $(src.value[2:end-1])")
+end
+
+
+PRINT_HANDLERS["vcvtsi2sd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = (double) $b[0], $a[1]")
+end
+
+
+PRINT_HANDLERS["vaddss"] =
 PRINT_HANDLERS["vaddsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst = (double) $a + $b")
+    print(io, "$dst = $a + $b")
 end
 
+PRINT_HANDLERS["vaddps"] =
 PRINT_HANDLERS["vaddpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst .= (double) $a .+ $b")
+    print(io, "$dst .= $a .+ $b")
 end
 
+PRINT_HANDLERS["vsubss"] =
 PRINT_HANDLERS["vsubsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst = (double) $a - $b")
+    print(io, "$dst = $a - $b")
 end
 
+PRINT_HANDLERS["vsubps"] =
 PRINT_HANDLERS["vsubpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst .= (double) $a .- $b")
+    print(io, "$dst .= $a .- $b")
 end
 
+PRINT_HANDLERS["vmulss"] =
 PRINT_HANDLERS["vmulsd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst = (double) $a * $b")
+    print(io, "$dst = $a * $b")
 end
 
+PRINT_HANDLERS["vmulps"] =
 PRINT_HANDLERS["vmulpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
-    print(io, "$dst .= (double) $a .* $b")
+    print(io, "$dst .= $a .* $b")
 end
+
+PRINT_HANDLERS["vdivss"] =
+PRINT_HANDLERS["vdivsd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst = $a / $b")
+end
+
+PRINT_HANDLERS["vdivps"] =
+PRINT_HANDLERS["vdivpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    print(io, "$dst .= $a ./ $b")
+end
+
 
 PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
@@ -394,49 +549,23 @@ PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
 end
 
 
-function verbatim_print_hander(io::IO, instr::AssemblyInstruction)
-    assert_num_operands(instr, 1)
-    print(io, instr.opcode, ' ', instr.operands[1])
-end
-
-PRINT_HANDLERS["push"] =
-PRINT_HANDLERS["pop"] = 
-PRINT_HANDLERS["call"] = verbatim_print_hander
-
-
 function comment_print_handler(io::IO, instr::AssemblyInstruction)
-    @assert !isempty(instr.comment)
-    print(io, instr.comment)
-end
-
-PRINT_HANDLERS["vpermilpd"] = comment_print_handler
-
-
-function comment_double_print_handler(io::IO, instr::AssemblyInstruction)
     @assert !isempty(instr.comment)
     parts = split(instr.comment, " = ")
     @assert length(parts) == 2
     lhs, rhs = parts
-    print(io, "$lhs = (double) $rhs")
+    print(io, "$lhs = $rhs")
 end
 
+PRINT_HANDLERS["vpermilpd"] =
 PRINT_HANDLERS["vfmadd231sd"] =
 PRINT_HANDLERS["vfmadd231pd"] =
 PRINT_HANDLERS["vfmsub213sd"] =
 PRINT_HANDLERS["vfmsub213pd"] =
 PRINT_HANDLERS["vfmsub132sd"] =
-PRINT_HANDLERS["vfnmsub213sd"] = comment_double_print_handler
-
-
-PRINT_HANDLERS["lea"] = (io::IO, instr::AssemblyInstruction) -> begin
-    assert_num_operands(instr, 2)
-    dst, src = instr.operands
-    @assert dst isa AssemblyRegister
-    @assert src isa AssemblyImmediate
-    @assert startswith(src.value, '[')
-    @assert endswith(src.value, ']')
-    print(io, "$dst = $(src.value[2:end-1])")
-end
+PRINT_HANDLERS["vfmsub132pd"] =
+PRINT_HANDLERS["vfnmsub213sd"] =
+PRINT_HANDLERS["vfnmsub213pd"] = comment_print_handler
 
 
 ################################################################################
