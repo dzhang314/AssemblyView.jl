@@ -11,33 +11,58 @@ using InteractiveUtils: _dump_function
 ################################################################# REGISTER NAMES
 
 
-const X86_REGISTER_NAMES = [
-    "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
-    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
-     "ax",  "cx",  "dx",  "bx",  "sp",  "bp",  "si",  "di",
-     "ah",  "ch",  "dh",  "bh",
-     "al",  "cl",  "dl",  "bl", "spl", "bpl", "sil", "dil",
-    "r8",  "r9",  "r10",  "r11",  "r12",  "r13",  "r14",  "r15",
-    "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
-    "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
-    "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
-    "zmm0", "ymm0", "xmm0", "zmm1", "ymm1", "xmm1",
-    "zmm2", "ymm2", "xmm2", "zmm3", "ymm3", "xmm3",
-    "zmm4", "ymm4", "xmm4", "zmm5", "ymm5", "xmm5",
-    "zmm6", "ymm6", "xmm6", "zmm7", "ymm7", "xmm7",
-    "zmm8", "ymm8", "xmm8", "zmm9", "ymm9", "xmm9",
-    "zmm10", "ymm10", "xmm10", "zmm11", "ymm11", "xmm11",
-    "zmm12", "ymm12", "xmm12", "zmm13", "ymm13", "xmm13",
-    "zmm14", "ymm14", "xmm14", "zmm15", "ymm15", "xmm15",
-    "zmm16", "ymm16", "xmm16", "zmm17", "ymm17", "xmm17",
-    "zmm18", "ymm18", "xmm18", "zmm19", "ymm19", "xmm19",
-    "zmm20", "ymm20", "xmm20", "zmm21", "ymm21", "xmm21",
-    "zmm22", "ymm22", "xmm22", "zmm23", "ymm23", "xmm23",
-    "zmm24", "ymm24", "xmm24", "zmm25", "ymm25", "xmm25",
-    "zmm26", "ymm26", "xmm26", "zmm27", "ymm27", "xmm27",
-    "zmm28", "ymm28", "xmm28", "zmm29", "ymm29", "xmm29",
-    "zmm30", "ymm30", "xmm30", "zmm31", "ymm31", "xmm31",
-]
+const X86_REGISTER_NAMES = Dict{String,Symbol}(
+    "ah" => :A, "al" => :A, "ax" => :A, "eax" => :A, "rax" => :A,
+    "ch" => :C, "cl" => :C, "cx" => :C, "ecx" => :C, "rcx" => :C,
+    "dh" => :D, "dl" => :D, "dx" => :D, "edx" => :D, "rdx" => :D,
+    "bh" => :B, "bl" => :B, "bx" => :B, "ebx" => :B, "rbx" => :B,
+    "spl" => :SP, "sp" => :SP, "esp" => :SP, "rsp" => :SP,
+    "bpl" => :BP, "bp" => :BP, "ebp" => :BP, "rbp" => :BP,
+    "sil" => :SI, "si" => :SI, "esi" => :SI, "rsi" => :SI,
+    "dil" => :DI, "di" => :DI, "edi" => :DI, "rdi" => :DI,
+    "r8b" => :R8, "r8w" => :R8, "r8d" => :R8, "r8" => :R8,
+    "r9b" => :R9, "r9w" => :R9, "r9d" => :R9, "r9" => :R9,
+    "r10b" => :R10, "r10w" => :R10, "r10d" => :R10, "r10" => :R10,
+    "r11b" => :R11, "r11w" => :R11, "r11d" => :R11, "r11" => :R11,
+    "r12b" => :R12, "r12w" => :R12, "r12d" => :R12, "r12" => :R12,
+    "r13b" => :R13, "r13w" => :R13, "r13d" => :R13, "r13" => :R13,
+    "r14b" => :R14, "r14w" => :R14, "r14d" => :R14, "r14" => :R14,
+    "r15b" => :R15, "r15w" => :R15, "r15d" => :R15, "r15" => :R15,
+    "xmm0" => :SSE0, "ymm0" => :SSE0, "zmm0" => :SSE0,
+    "xmm1" => :SSE1, "ymm1" => :SSE1, "zmm1" => :SSE1,
+    "xmm2" => :SSE2, "ymm2" => :SSE2, "zmm2" => :SSE2,
+    "xmm3" => :SSE3, "ymm3" => :SSE3, "zmm3" => :SSE3,
+    "xmm4" => :SSE4, "ymm4" => :SSE4, "zmm4" => :SSE4,
+    "xmm5" => :SSE5, "ymm5" => :SSE5, "zmm5" => :SSE5,
+    "xmm6" => :SSE6, "ymm6" => :SSE6, "zmm6" => :SSE6,
+    "xmm7" => :SSE7, "ymm7" => :SSE7, "zmm7" => :SSE7,
+    "xmm8" => :SSE8, "ymm8" => :SSE8, "zmm8" => :SSE8,
+    "xmm9" => :SSE9, "ymm9" => :SSE9, "zmm9" => :SSE9,
+    "xmm10" => :SSE10, "ymm10" => :SSE10, "zmm10" => :SSE10,
+    "xmm11" => :SSE11, "ymm11" => :SSE11, "zmm11" => :SSE11,
+    "xmm12" => :SSE12, "ymm12" => :SSE12, "zmm12" => :SSE12,
+    "xmm13" => :SSE13, "ymm13" => :SSE13, "zmm13" => :SSE13,
+    "xmm14" => :SSE14, "ymm14" => :SSE14, "zmm14" => :SSE14,
+    "xmm15" => :SSE15, "ymm15" => :SSE15, "zmm15" => :SSE15,
+    "xmm16" => :SSE16, "ymm16" => :SSE16, "zmm16" => :SSE16,
+    "xmm17" => :SSE17, "ymm17" => :SSE17, "zmm17" => :SSE17,
+    "xmm18" => :SSE18, "ymm18" => :SSE18, "zmm18" => :SSE18,
+    "xmm19" => :SSE19, "ymm19" => :SSE19, "zmm19" => :SSE19,
+    "xmm20" => :SSE20, "ymm20" => :SSE20, "zmm20" => :SSE20,
+    "xmm21" => :SSE21, "ymm21" => :SSE21, "zmm21" => :SSE21,
+    "xmm22" => :SSE22, "ymm22" => :SSE22, "zmm22" => :SSE22,
+    "xmm23" => :SSE23, "ymm23" => :SSE23, "zmm23" => :SSE23,
+    "xmm24" => :SSE24, "ymm24" => :SSE24, "zmm24" => :SSE24,
+    "xmm25" => :SSE25, "ymm25" => :SSE25, "zmm25" => :SSE25,
+    "xmm26" => :SSE26, "ymm26" => :SSE26, "zmm26" => :SSE26,
+    "xmm27" => :SSE27, "ymm27" => :SSE27, "zmm27" => :SSE27,
+    "xmm28" => :SSE28, "ymm28" => :SSE28, "zmm28" => :SSE28,
+    "xmm29" => :SSE29, "ymm29" => :SSE29, "zmm29" => :SSE29,
+    "xmm30" => :SSE30, "ymm30" => :SSE30, "zmm30" => :SSE30,
+    "xmm31" => :SSE31, "ymm31" => :SSE31, "zmm31" => :SSE31,
+)
+
+
 
 
 ############################################################## ASSEMBLY OPERANDS
@@ -134,7 +159,7 @@ end
 
 function parse_assembly_operand(op::AbstractString)
     op = strip(op)
-    if any(op == reg_name for reg_name in X86_REGISTER_NAMES)
+    if any(op == reg_name for reg_name in keys(X86_REGISTER_NAMES))
         return AssemblyRegister(op)
     end
     mem_op_match = match(r"([a-z]+) ptr \[(.*)\]", op)
