@@ -368,6 +368,7 @@ const X86_MOV_OPCODES = [
     "vmovaps",
     "vmovapd",
     "vmovdqa",
+    "vextractf128",
 ]
 
 
@@ -400,6 +401,20 @@ PRINT_HANDLERS["vmovdqa"] = (io::IO, instr::AssemblyInstruction) -> begin
 end
 
 
+PRINT_HANDLERS["vextractf128"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, src, imm = instr.operands
+    @assert imm isa AssemblyImmediate
+    if imm.value == "0"
+        print(io, "$dst = $src[0:127]")
+    elseif imm.value == "1"
+        print(io, "$dst = $src[128:255]")
+    else
+        @assert false
+    end
+end
+
+
 ############################################################# ARITHMETIC OPCODES
 
 
@@ -410,6 +425,9 @@ const X86_ARITHMETIC_OPCODES = [
     "sub",
     "and",
     "andn",
+    "xor",
+    "vxorps",
+    "vxorpd",
     "sar",
     "lea",
     "vcvtsi2sd",
@@ -429,7 +447,6 @@ const X86_ARITHMETIC_OPCODES = [
     "vdivsd",
     "vdivps",
     "vdivpd",
-    "vxorpd",
     "vpermilpd",
     "vfmadd231sd",
     "vfmadd231pd",
@@ -478,6 +495,29 @@ PRINT_HANDLERS["andn"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
     print(io, "$dst = ~$a & $b")
+end
+
+
+PRINT_HANDLERS["xor"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    if dst == src
+        print(io, "$dst = 0")
+    else
+        print(io, "$dst ^= src")
+    end
+end
+
+
+PRINT_HANDLERS["vxorps"] =
+PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 3)
+    dst, a, b = instr.operands
+    if a == b
+        print(io, "$dst .= 0")
+    else
+        print(io, "$dst .= $a .^ $b")
+    end
 end
 
 
@@ -560,17 +600,6 @@ PRINT_HANDLERS["vdivpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 3)
     dst, a, b = instr.operands
     print(io, "$dst .= $a ./ $b")
-end
-
-
-PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
-    assert_num_operands(instr, 3)
-    dst, a, b = instr.operands
-    if a == b
-        print(io, "$dst .= 0")
-    else
-        print(io, "$dst .= $a .^ $b")
-    end
 end
 
 
