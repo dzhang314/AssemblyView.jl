@@ -63,8 +63,6 @@ const X86_REGISTER_NAMES = Dict{String,Symbol}(
 )
 
 
-
-
 ############################################################## ASSEMBLY OPERANDS
 
 
@@ -282,7 +280,7 @@ end
 ################################################################ PRINT UTILITIES
 
 
-function assert_num_operands(instr::AssemblyInstruction, n::Int)
+function assert_num_operands(instr::AssemblyInstruction, n::Int)::Nothing
     if length(instr.operands) != n
         throw(AssertionError("AssemblyView.jl INTERNAL ERROR: Encountered" *
                              " $(instr.opcode) instruction with wrong" *
@@ -319,7 +317,7 @@ const X86_CONTROL_OPCODES = [
 ]
 
 
-function verbatim_print_hander(io::IO, instr::AssemblyInstruction)
+function verbatim_print_hander(io::IO, instr::AssemblyInstruction)::Nothing
     assert_num_operands(instr, 1)
     print(io, instr.opcode, ' ', instr.operands[1])
 end
@@ -367,7 +365,7 @@ const X86_CONDITIONAL_JUMP_OPCODES = [
 ]
 
 
-function make_conditional_jump_handler(op::String)
+function make_conditional_jump_handler(op::String)::Function
     return (io::IO, instr::AssemblyInstruction) -> begin
         if length(instr.operands) == 1
             label = instr.operands[1]
@@ -812,7 +810,8 @@ function remove_prologue_epilogue(
 end
 
 
-function fuse_conditional_jumps(stmts::Vector{AssemblyStatement})
+function fuse_conditional_jumps(
+        stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
     stmts = copy(stmts)
     for i = 1 : length(stmts)
         if (stmts[i] isa AssemblyInstruction
@@ -821,6 +820,59 @@ function fuse_conditional_jumps(stmts::Vector{AssemblyStatement})
             && stmts[i-1].opcode in X86_COMPARISON_OPCODES)
             prepend!(stmts[i].operands, stmts[i-1].operands)
             stmts[i-1] = AssemblyInstruction("nop")
+        end
+    end
+    return remove_nops(stmts)
+end
+
+
+is_register_arithmetic_instruction(stmt::AssemblyStatement)::Bool = (
+    stmt isa AssemblyInstruction
+    && (stmt.opcode in AssemblyView.X86_ARITHMETIC_OPCODES
+        || stmt.opcode in AssemblyView.X86_MOV_OPCODES)
+    && all(((op isa AssemblyRegister)
+            || (op isa AssemblyImmediate))
+           for op in stmt.operands))
+
+
+is_memory_arithmetic_instruction(stmt::AssemblyStatement)::Bool = (
+    stmt isa AssemblyInstruction
+    && (stmt.opcode in AssemblyView.X86_ARITHMETIC_OPCODES
+        || stmt.opcode in AssemblyView.X86_MOV_OPCODES)
+    && all(((op isa AssemblyRegister)
+            || (op isa AssemblyImmediate)
+            || (op isa AssemblyMemoryOperand))
+           for op in stmt.operands))
+
+
+function fuse_instructions(predicate, pseudo_opcode::String, min_length::Int,
+        stmts::Vector{AssemblyStatement})::Vector{AssemblyStatement}
+    stmts = copy(stmts)
+    i = 1
+    while i <= length(stmts)
+        if predicate(stmts[i])
+            j = i
+            affected_operands = Set{AssemblyOperand}()
+            while predicate(stmts[j])
+                for op in stmts[j].operands
+                    if !(op isa AssemblyImmediate)
+                        push!(affected_operands, op)
+                    end
+                end
+                j += 1
+            end
+            j -= 1
+            if (j - i + 1) >= min_length
+                stmts[i] = AssemblyInstruction(pseudo_opcode,
+                    push!(collect(affected_operands),
+                        AssemblyImmediate(string(length(affected_operands)))))
+                for k = i+1 : j
+                    stmts[k] = AssemblyInstruction("nop")
+                end
+            end
+            i = j + 1
+        else
+            i += 1
         end
     end
     return remove_nops(stmts)
