@@ -316,8 +316,6 @@ const X86_CONTROL_OPCODES = [
     "call",
     "ret",
     "jmp",
-    "cmp",
-    "vucomisd",
 ]
 
 
@@ -345,12 +343,73 @@ PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
 end
 
 
+####################################################### CONDITIONAL JUMP OPCODES
+
+
+const X86_COMPARISON_OPCODES = [
+    "cmp",
+    "vucomisd",
+]
+
+
 PRINT_HANDLERS["cmp"] =
 PRINT_HANDLERS["vucomisd"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 2)
     a, b = instr.operands
     print(io, "$a <=> $b")
 end
+
+
+const X86_CONDITIONAL_JUMP_OPCODES = [
+    "ja", "jnbe", "jae", "jnb", "jb", "jnae", "jbe", "jna",
+    "jg", "jnle", "jge", "jnl", "jl", "jnge", "jle", "jng",
+    "je", "jne",
+]
+
+
+function make_conditional_jump_handler(op::String)
+    return (io::IO, instr::AssemblyInstruction) -> begin
+        if length(instr.operands) == 1
+            label = instr.operands[1]
+            print(io, "if ($op) goto $label")
+        elseif length(instr.operands) == 3
+            a, b, label = instr.operands
+            print(io, "if ($a $op $b) goto $label")
+        else
+            @assert false
+        end
+    end
+end
+
+
+PRINT_HANDLERS["ja"] =
+PRINT_HANDLERS["jnbe"] =
+PRINT_HANDLERS["jg"] =
+PRINT_HANDLERS["jnle"] = make_conditional_jump_handler(">")
+
+
+PRINT_HANDLERS["jae"] =
+PRINT_HANDLERS["jnb"] =
+PRINT_HANDLERS["jge"] =
+PRINT_HANDLERS["jnl"] = make_conditional_jump_handler(">=")
+
+
+PRINT_HANDLERS["jb"] =
+PRINT_HANDLERS["jnae"] =
+PRINT_HANDLERS["jl"] =
+PRINT_HANDLERS["jnge"] = make_conditional_jump_handler("<")
+
+
+PRINT_HANDLERS["jbe"] =
+PRINT_HANDLERS["jna"] =
+PRINT_HANDLERS["jle"] =
+PRINT_HANDLERS["jng"] = make_conditional_jump_handler("<=")
+
+
+PRINT_HANDLERS["je"] = make_conditional_jump_handler("==")
+
+
+PRINT_HANDLERS["jne"] = make_conditional_jump_handler("!=")
 
 
 #################################################################### MOV OPCODES
@@ -428,6 +487,7 @@ const X86_ARITHMETIC_OPCODES = [
     "xor",
     "vxorps",
     "vxorpd",
+    "shl",
     "sar",
     "lea",
     "vcvtsi2sd",
@@ -518,6 +578,13 @@ PRINT_HANDLERS["vxorpd"] = (io::IO, instr::AssemblyInstruction) -> begin
     else
         print(io, "$dst .= $a .^ $b")
     end
+end
+
+
+PRINT_HANDLERS["shl"] = (io::IO, instr::AssemblyInstruction) -> begin
+    assert_num_operands(instr, 2)
+    dst, src = instr.operands
+    print(io, "$dst <<= $src")
 end
 
 
@@ -626,12 +693,14 @@ PRINT_HANDLERS["vfnmsub213pd"] = comment_print_handler
 
 
 @assert isempty(symdiff(
-    Set{String}(keys(AssemblyView.PRINT_HANDLERS)),
+    Set{String}(keys(PRINT_HANDLERS)),
     union(
-        Set{String}(AssemblyView.X86_IGNORED_OPCODES),
-        Set{String}(AssemblyView.X86_CONTROL_OPCODES),
-        Set{String}(AssemblyView.X86_MOV_OPCODES),
-        Set{String}(AssemblyView.X86_ARITHMETIC_OPCODES),
+        Set{String}(X86_IGNORED_OPCODES),
+        Set{String}(X86_CONTROL_OPCODES),
+        Set{String}(X86_COMPARISON_OPCODES),
+        Set{String}(X86_CONDITIONAL_JUMP_OPCODES),
+        Set{String}(X86_MOV_OPCODES),
+        Set{String}(X86_ARITHMETIC_OPCODES),
     )
 ))
 
@@ -743,6 +812,21 @@ function remove_prologue_epilogue(
 end
 
 
+function fuse_conditional_jumps(stmts::Vector{AssemblyStatement})
+    stmts = copy(stmts)
+    for i = 1 : length(stmts)
+        if (stmts[i] isa AssemblyInstruction
+            && stmts[i].opcode in X86_CONDITIONAL_JUMP_OPCODES
+            && stmts[i-1] isa AssemblyInstruction
+            && stmts[i-1].opcode in X86_COMPARISON_OPCODES)
+            prepend!(stmts[i].operands, stmts[i-1].operands)
+            stmts[i-1] = AssemblyInstruction("nop")
+        end
+    end
+    return remove_nops(stmts)
+end
+
+
 ################################################################ ASSEMBLY OUTPUT
 
 
@@ -755,6 +839,7 @@ function view_asm(io::IO, @nospecialize(func), @nospecialize(types...))::Nothing
     parsed_stmts = parsed_asm(func, types...)
     parsed_stmts = remove_nops(parsed_stmts)
     parsed_stmts = remove_prologue_epilogue(parsed_stmts)
+    parsed_stmts = fuse_conditional_jumps(parsed_stmts)
 
     unknown_opcodes = Dict{String,Int}()
     for stmt in parsed_stmts
