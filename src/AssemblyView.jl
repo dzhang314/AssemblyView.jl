@@ -336,7 +336,7 @@ end
 PRINT_HANDLERS["jmp"] = (io::IO, instr::AssemblyInstruction) -> begin
     assert_num_operands(instr, 1)
     label = instr.operands[1]
-    @assert label isa Union{AssemblyImmediate, AssemblyMemoryOperand}
+    @assert label isa Union{AssemblyImmediate,AssemblyMemoryOperand}
     print(io, "goto $label")
 end
 
@@ -587,9 +587,15 @@ end
 
 
 PRINT_HANDLERS["sar"] = (io::IO, instr::AssemblyInstruction) -> begin
-    assert_num_operands(instr, 2)
-    dst, src = instr.operands
-    print(io, "$dst >>= $src")
+    if length(instr.operands) == 1
+        dst = instr.operands[1]
+        print(io, "$dst >>= 1")
+    elseif length(instr.operands) == 2
+        dst, src = instr.operands
+        print(io, "$dst >>= $src")
+    else
+        @assert false
+    end
 end
 
 
