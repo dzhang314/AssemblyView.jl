@@ -323,7 +323,7 @@ function verbatim_print_hander(io::IO, instr::AssemblyInstruction)::Nothing
 end
 
 PRINT_HANDLERS["push"] =
-PRINT_HANDLERS["pop"] = 
+PRINT_HANDLERS["pop"] =
 PRINT_HANDLERS["call"] = verbatim_print_hander
 
 
@@ -506,6 +506,8 @@ const X86_ARITHMETIC_OPCODES = [
     "vdivps",
     "vdivpd",
     "vpermilpd",
+    "vfmadd213sd",
+    "vfmadd213pd",
     "vfmadd231sd",
     "vfmadd231pd",
     "vfmsub213sd",
@@ -683,6 +685,8 @@ function comment_print_handler(io::IO, instr::AssemblyInstruction)
 end
 
 PRINT_HANDLERS["vpermilpd"] =
+PRINT_HANDLERS["vfmadd213sd"] =
+PRINT_HANDLERS["vfmadd213pd"] =
 PRINT_HANDLERS["vfmadd231sd"] =
 PRINT_HANDLERS["vfmadd231pd"] =
 PRINT_HANDLERS["vfmsub213sd"] =
