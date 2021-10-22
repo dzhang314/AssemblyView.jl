@@ -235,16 +235,34 @@ function parsed_asm(@nospecialize(func), @nospecialize(types...);
         types = types[1]
     end
 
-    # Call internal Julia API to generate x86 assembly code.
-    code = _dump_function(func, types,
-        true,   # Generate native code (as opposed to LLVM IR).
-        false,  # Don't generate wrapper code.
-        true,   # (strip_ir_metadata) Ignored when dumping native code.
-        true,   # (dump_module) Ignored when dumping native code.
-        :intel, # I prefer Intel assembly syntax.
-        true,   # (optimize) Ignored when dumping native code.
-        :source # TODO: What does debuginfo=:source mean?
-    )
+    if (VERSION.major > 1) || (VERSION.major == 1 && VERSION.minor >= 7)
+
+        # Call internal Julia API to generate x86 assembly code.
+        code = _dump_function(func, types,
+            true,    # Generate native code (as opposed to LLVM IR).
+            false,   # Don't generate wrapper code.
+            true,    # (strip_ir_metadata) Ignored when dumping native code.
+            true,    # (dump_module) Ignored when dumping native code.
+            :intel,  # I prefer Intel assembly syntax.
+            true,    # (optimize) Ignored when dumping native code.
+            :source, # TODO: What does debuginfo=:source mean?
+            false    # Don't display binary machine code.
+        )
+
+    else
+
+        # Call internal Julia API to generate x86 assembly code.
+        code = _dump_function(func, types,
+            true,   # Generate native code (as opposed to LLVM IR).
+            false,  # Don't generate wrapper code.
+            true,   # (strip_ir_metadata) Ignored when dumping native code.
+            true,   # (dump_module) Ignored when dumping native code.
+            :intel, # I prefer Intel assembly syntax.
+            true,   # (optimize) Ignored when dumping native code.
+            :source # TODO: What does debuginfo=:source mean?
+        )
+
+    end
 
     # Parse each line of code, discarding comments if requested.
     result = AssemblyStatement[]
