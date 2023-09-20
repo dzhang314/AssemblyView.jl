@@ -1,15 +1,6 @@
 module AssemblyView
 
-export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
-    AssemblyImmediate, AssemblyOffset, AssemblyStatement, AssemblyComment,
-    AssemblyLabel, AssemblyInstruction,
-    parsed_asm, asm_offsets, view_asm
-
-using InteractiveUtils: _dump_function
-
-
 ################################################################# REGISTER NAMES
-
 
 const X86_REGISTER_NAMES = Dict{String,Symbol}(
     "ah" => :A, "al" => :A, "ax" => :A, "eax" => :A, "rax" => :A,
@@ -61,6 +52,73 @@ const X86_REGISTER_NAMES = Dict{String,Symbol}(
     "xmm30" => :SSE30, "ymm30" => :SSE30, "zmm30" => :SSE30,
     "xmm31" => :SSE31, "ymm31" => :SSE31, "zmm31" => :SSE31,
 )
+
+################################################################################
+
+export view_asm
+
+using InteractiveUtils: code_native
+
+const BLOCK_OPEN_REGEX =
+    r"^; (│*)┌ @ (.*)(?::([0-9]+))? within `(.*)`(?: @ (.*):([0-9]+))?$"
+const BLOCK_CONTINUE_REGEX =
+    r"^; (│*) @ (.*)(?::([0-9]+))? within `(.*)`(?: @ (.*):([0-9]+))?$"
+const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
+const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]+):((?: [0-9a-f][0-9a-f])*)$"
+
+function view_asm(@nospecialize(f), @nospecialize(types...))
+    buffer = IOBuffer()
+    code_native(
+        buffer, f, types;
+        syntax=:intel, debuginfo=:default, binary=true, dump_module=false
+    )
+    seek(buffer, 0)
+    for line in eachline(buffer)
+        if line == "\t.text"
+            continue
+        elseif startswith(line, ';')
+            block_open_match = match(BLOCK_OPEN_REGEX, line)
+            block_continue_match = match(BLOCK_CONTINUE_REGEX, line)
+            block_close_match = match(BLOCK_CLOSE_REGEX, line)
+            hex_instruction_match = match(HEX_INSTRUCTION_REGEX, line)
+            @assert +(
+                !isnothing(block_open_match),
+                !isnothing(block_continue_match),
+                !isnothing(block_close_match),
+                !isnothing(hex_instruction_match)
+            ) <= 1
+            if !isnothing(block_open_match)
+                println("OPEN COMMENT: ", line) # TODO
+            elseif !isnothing(block_continue_match)
+                println("CONTINUE COMMENT: ", line) # TODO
+            elseif !isnothing(block_close_match)
+                println("CLOSE COMMENT: ", line) # TODO
+            elseif !isnothing(hex_instruction_match)
+                println("INSTRUCTION COMMENT: ", line) # TODO
+            else
+                println("WARNING: Ignoring comment in unrecognized format.")
+                println(line)
+            end
+        elseif startswith(line, '\t')
+            println("INSTRUCTION: ", line) # TODO
+        else
+            println("WARNING: Ignoring line in unrecognized format.")
+            println(line)
+        end
+    end
+end
+
+#=
+
+export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
+    AssemblyImmediate, AssemblyOffset, AssemblyStatement, AssemblyComment,
+    AssemblyLabel, AssemblyInstruction,
+    parsed_asm, asm_offsets, view_asm
+
+using InteractiveUtils: _dump_function
+
+
+
 
 
 ############################################################## ASSEMBLY OPERANDS
@@ -956,5 +1014,6 @@ end
 view_asm(@nospecialize(func), @nospecialize(types...))::Nothing =
     view_asm(stdout, func, types...)
 
+=#
 
 end # module AssemblyView
