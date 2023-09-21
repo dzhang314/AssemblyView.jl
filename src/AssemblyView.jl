@@ -55,25 +55,30 @@ const X86_REGISTER_NAMES = Dict{String,Symbol}(
 
 ################################################################################
 
-export view_asm
-
 using InteractiveUtils: code_native
 
-const BLOCK_OPEN_REGEX =
-    r"^; (│*)┌ @ (.*)(?::([0-9]+))? within `(.*)`(?: @ (.*):([0-9]+))?$"
-const BLOCK_CONTINUE_REGEX =
-    r"^; (│*) @ (.*)(?::([0-9]+))? within `(.*)`(?: @ (.*):([0-9]+))?$"
-const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
-const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]+):((?: [0-9a-f][0-9a-f])*)$"
-
-function view_asm(@nospecialize(f), @nospecialize(types...))
+function assembly_lines(@nospecialize(f), @nospecialize(types))
     buffer = IOBuffer()
     code_native(
         buffer, f, types;
         syntax=:intel, debuginfo=:default, binary=true, dump_module=false
     )
     seek(buffer, 0)
-    for line in eachline(buffer)
+    return eachline(buffer)
+end
+
+################################################################################
+
+export view_asm
+
+const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
+const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
+const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
+const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]+):((?: [0-9a-f][0-9a-f])*)$"
+
+function view_asm(@nospecialize(f), @nospecialize(types...))
+    context_stack = Tuple{String,String,Union{Nothing,String}}[]
+    for line in assembly_lines(f, types)
         if line == "\t.text"
             continue
         elseif startswith(line, ';')
@@ -88,11 +93,32 @@ function view_asm(@nospecialize(f), @nospecialize(types...))
                 !isnothing(hex_instruction_match)
             ) <= 1
             if !isnothing(block_open_match)
-                println("OPEN COMMENT: ", line) # TODO
+                level_str, source_location, func_name, func_location =
+                    block_open_match
+                @assert all(c == '│' for c in level_str)
+                @assert length(context_stack) == length(level_str)
+                push!(
+                    context_stack,
+                    (source_location, func_name, func_location)
+                )
             elseif !isnothing(block_continue_match)
-                println("CONTINUE COMMENT: ", line) # TODO
+                level_str, source_location, func_name, func_location =
+                    block_continue_match
+                @assert all(c == '│' for c in level_str)
+                @assert length(context_stack) == length(level_str)
+                pop!(context_stack)
+                push!(
+                    context_stack,
+                    (source_location, func_name, func_location)
+                )
             elseif !isnothing(block_close_match)
-                println("CLOSE COMMENT: ", line) # TODO
+                level_str, close_str = block_close_match
+                @assert all(c == '│' for c in level_str)
+                @assert all(c == '└' for c in close_str)
+                for _ in close_str
+                    pop!(context_stack)
+                end
+                @assert length(context_stack) == length(level_str)
             elseif !isnothing(hex_instruction_match)
                 println("INSTRUCTION COMMENT: ", line) # TODO
             else
