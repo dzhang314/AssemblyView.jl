@@ -1,5 +1,220 @@
 module AssemblyView
 
+
+################################################################################
+
+
+using InteractiveUtils: code_native
+
+
+function assembly_lines(@nospecialize(f), @nospecialize(types))
+    buffer = IOBuffer()
+    code_native(
+        buffer, f, types;
+        syntax=:intel, debuginfo=:default, binary=true, dump_module=false
+    )
+    return split(String(take!(buffer)), '\n'; keepempty=false)
+end
+
+
+################################################################################
+
+
+const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
+const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
+const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
+const CODE_INFO_REGEX = r"^; code origin: ([0-9a-f]+), code size: ([0-9]+)$"
+const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}):((?: [0-9a-f]{2})*)$"
+
+
+struct SourceLocation
+    file_name::SubString{String}
+    line_number::Union{Nothing,Int}
+end
+
+
+function SourceLocation(s::SubString{String})
+    colon_index = findlast(':', s)
+    if isnothing(colon_index)
+        return SourceLocation(s, nothing)
+    else
+        try
+            line_number = parse(Int, s[colon_index+1:end]; base=10)
+            return SourceLocation(s[1:colon_index-1], line_number)
+        catch
+            SourceLocation(s, nothing)
+        end
+    end
+end
+
+
+struct SourceContext
+    origin::SourceLocation
+    function_name::SubString{String}
+    overload_path::Vector{SourceLocation}
+end
+
+
+struct AssemblyInstruction
+    code::SubString{String}
+    short_address::UInt16
+    binary::Vector{UInt8}
+    context::Vector{SourceContext}
+end
+
+
+struct AssemblyLabel
+    name::SubString{String}
+end
+
+
+function parse_metadata(lines::Vector{SubString{String}})
+
+    code_origin = nothing
+    code_size = nothing
+    last_short_address = nothing
+    last_binary = nothing
+    context_stack = SourceContext[]
+    result = Union{AssemblyInstruction,AssemblyLabel}[]
+
+    for line in lines
+
+        if line == "\t.text"
+
+            # Ignore .text section header.
+            continue
+
+        elseif startswith(line, ';')
+
+            # The output of `code_native` contains several types of comments
+            # that provide useful metadata about the generated assembly code.
+            # We use regular expressions to detect and parse these comments.
+            block_open_match = match(BLOCK_OPEN_REGEX, line)
+            block_continue_match = match(BLOCK_CONTINUE_REGEX, line)
+            block_close_match = match(BLOCK_CLOSE_REGEX, line)
+            code_info_match = match(CODE_INFO_REGEX, line)
+            hex_instruction_match = match(HEX_INSTRUCTION_REGEX, line)
+
+            # Assert that at most one match occurred.
+            @assert +(
+                !isnothing(block_open_match),
+                !isnothing(block_continue_match),
+                !isnothing(block_close_match),
+                !isnothing(code_info_match),
+                !isnothing(hex_instruction_match),
+            ) <= 1
+
+            if !isnothing(block_open_match)
+
+                stack_str, loc_str, func_name, path_str = block_open_match
+                @assert all(c == '│' for c in stack_str)
+                @assert length(context_stack) == length(stack_str)
+                if isnothing(path_str)
+                    push!(context_stack, SourceContext(
+                        SourceLocation(loc_str), func_name, SourceLocation[]
+                    ))
+                else
+                    push!(context_stack, SourceContext(
+                        SourceLocation(loc_str), func_name,
+                        SourceLocation.(split(path_str, " @ "))
+                    ))
+                end
+
+            elseif !isnothing(block_continue_match)
+
+                stack_str, loc_str, func_name, path_str = block_continue_match
+                @assert all(c == '│' for c in stack_str)
+                @assert length(context_stack) == length(stack_str)
+                pop!(context_stack)
+                if isnothing(path_str)
+                    push!(context_stack, SourceContext(
+                        SourceLocation(loc_str), func_name, SourceLocation[]
+                    ))
+                else
+                    push!(context_stack, SourceContext(
+                        SourceLocation(loc_str), func_name,
+                        SourceLocation.(split(path_str, " @ "))
+                    ))
+                end
+
+            elseif !isnothing(block_close_match)
+
+                stack_str, close_str = block_close_match
+                @assert all(c == '│' for c in stack_str)
+                @assert all(c == '└' for c in close_str)
+                for _ in close_str
+                    pop!(context_stack)
+                end
+                @assert length(context_stack) == length(stack_str)
+
+            elseif !isnothing(code_info_match)
+
+                @assert isnothing(code_origin) && isnothing(code_size)
+                code_origin_str, code_size_str = code_info_match
+                code_origin = parse(UInt, code_origin_str; base=16)
+                code_size = parse(Int, code_size_str; base=10)
+
+            elseif !isnothing(hex_instruction_match)
+
+                short_address_str, byte_str = hex_instruction_match
+                last_short_address = parse(UInt16, short_address_str; base=16)
+                last_binary = [
+                    parse(UInt8, byte; base=16)
+                    for byte in split(byte_str)
+                ]
+
+            else
+
+                @warn "Ignoring assembly comment in unrecognized format: $line"
+
+            end
+
+        elseif startswith(line, '\t')
+
+            @assert !isnothing(last_short_address)
+            @assert !isnothing(last_binary)
+            push!(result, AssemblyInstruction(
+                line, last_short_address, last_binary, copy(context_stack)
+            ))
+
+        elseif endswith(line, ':')
+
+            push!(result, AssemblyLabel(line[1:end-1]))
+
+        else
+
+            @warn "Ignoring assembly line in unrecognized format: $line"
+
+        end
+
+    end
+
+    @assert !isnothing(code_origin)
+    @assert !isnothing(code_size)
+    @assert isempty(context_stack)
+    return (code_origin, code_size, result)
+
+end
+
+
+################################################################################
+
+
+export view_asm
+
+
+function view_asm(@nospecialize(f), @nospecialize(types...))
+    code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
+    for line in lines
+        if line isa AssemblyInstruction
+            println(line.code)
+        elseif line isa AssemblyLabel
+            println(line.name)
+        end
+    end
+end
+
+
 ################################################################# REGISTER NAMES
 
 const X86_REGISTER_NAMES = Dict{String,Symbol}(
@@ -55,85 +270,6 @@ const X86_REGISTER_NAMES = Dict{String,Symbol}(
 
 ################################################################################
 
-using InteractiveUtils: code_native
-
-function assembly_lines(@nospecialize(f), @nospecialize(types))
-    buffer = IOBuffer()
-    code_native(
-        buffer, f, types;
-        syntax=:intel, debuginfo=:default, binary=true, dump_module=false
-    )
-    seek(buffer, 0)
-    return eachline(buffer)
-end
-
-################################################################################
-
-export view_asm
-
-const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
-const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
-const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
-const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]+):((?: [0-9a-f][0-9a-f])*)$"
-
-function view_asm(@nospecialize(f), @nospecialize(types...))
-    context_stack = Tuple{String,String,Union{Nothing,String}}[]
-    for line in assembly_lines(f, types)
-        if line == "\t.text"
-            continue
-        elseif startswith(line, ';')
-            block_open_match = match(BLOCK_OPEN_REGEX, line)
-            block_continue_match = match(BLOCK_CONTINUE_REGEX, line)
-            block_close_match = match(BLOCK_CLOSE_REGEX, line)
-            hex_instruction_match = match(HEX_INSTRUCTION_REGEX, line)
-            @assert +(
-                !isnothing(block_open_match),
-                !isnothing(block_continue_match),
-                !isnothing(block_close_match),
-                !isnothing(hex_instruction_match)
-            ) <= 1
-            if !isnothing(block_open_match)
-                level_str, source_location, func_name, func_location =
-                    block_open_match
-                @assert all(c == '│' for c in level_str)
-                @assert length(context_stack) == length(level_str)
-                push!(
-                    context_stack,
-                    (source_location, func_name, func_location)
-                )
-            elseif !isnothing(block_continue_match)
-                level_str, source_location, func_name, func_location =
-                    block_continue_match
-                @assert all(c == '│' for c in level_str)
-                @assert length(context_stack) == length(level_str)
-                pop!(context_stack)
-                push!(
-                    context_stack,
-                    (source_location, func_name, func_location)
-                )
-            elseif !isnothing(block_close_match)
-                level_str, close_str = block_close_match
-                @assert all(c == '│' for c in level_str)
-                @assert all(c == '└' for c in close_str)
-                for _ in close_str
-                    pop!(context_stack)
-                end
-                @assert length(context_stack) == length(level_str)
-            elseif !isnothing(hex_instruction_match)
-                println("INSTRUCTION COMMENT: ", line) # TODO
-            else
-                println("WARNING: Ignoring comment in unrecognized format.")
-                println(line)
-            end
-        elseif startswith(line, '\t')
-            println("INSTRUCTION: ", line) # TODO
-        else
-            println("WARNING: Ignoring line in unrecognized format.")
-            println(line)
-        end
-    end
-end
-
 #=
 
 export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
@@ -142,10 +278,6 @@ export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
     parsed_asm, asm_offsets, view_asm
 
 using InteractiveUtils: _dump_function
-
-
-
-
 
 ############################################################## ASSEMBLY OPERANDS
 
