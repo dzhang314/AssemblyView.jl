@@ -1,7 +1,7 @@
 module AssemblyView
 
 
-################################################################################
+####################################################### EXTRACTING ASSEMBLY CODE
 
 
 using InteractiveUtils: code_native
@@ -17,7 +17,7 @@ function assembly_lines(@nospecialize(f), @nospecialize(types))
 end
 
 
-################################################################################
+###################################################### PARSING METADATA COMMENTS
 
 
 using Base.Iterators: partition
@@ -58,6 +58,9 @@ struct SourceContext
 end
 
 
+# The AssemblyInstruction datatype is architecture-agnostic and makes
+# no assumptions about the syntax of a particular assembly language.
+# It simply acts as a container for the metadata printed by `code_native`.
 struct AssemblyInstruction
     code::SubString{String}
     short_address::UInt16
@@ -109,6 +112,11 @@ function parse_metadata(lines::Vector{SubString{String}})
 
             if !isnothing(block_open_match)
 
+                # A block_open comment indicates that all subsequent assembly
+                # instructions are generated from a particular Julia function
+                # until a corresponding block_continue or block_close comment
+                # is reached. Blocks may nest to indicate multiple levels of
+                # Julia functions being inlined into the current function.
                 stack_str, loc_str, func_name, path_str = block_open_match
                 @assert all(c == '│' for c in stack_str)
                 @assert length(context_stack) == length(stack_str)
@@ -125,6 +133,8 @@ function parse_metadata(lines::Vector{SubString{String}})
 
             elseif !isnothing(block_continue_match)
 
+                # A block_continue comment closes one block and immediately
+                # opens another block in the same line.
                 stack_str, loc_str, func_name, path_str = block_continue_match
                 @assert all(c == '│' for c in stack_str)
                 @assert length(context_stack) == length(stack_str)
@@ -142,6 +152,8 @@ function parse_metadata(lines::Vector{SubString{String}})
 
             elseif !isnothing(block_close_match)
 
+                # A block_close comment closes one or more open blocks,
+                # indicated by the number of '└' characters.
                 stack_str, close_str = block_close_match
                 @assert all(c == '│' for c in stack_str)
                 @assert all(c == '└' for c in close_str)
@@ -152,6 +164,10 @@ function parse_metadata(lines::Vector{SubString{String}})
 
             elseif !isnothing(code_info_match)
 
+                # A code_info comment specifies the location in (virtual)
+                # memory and size of the compiled machine code for a particular
+                # Julia function. Exactly one code_info comment should appear
+                # in the output of each call to `code_native`.
                 @assert isnothing(code_origin) && isnothing(code_size)
                 code_origin_str, code_size_str = code_info_match
                 code_origin = parse(UInt, code_origin_str; base=16)
@@ -159,6 +175,8 @@ function parse_metadata(lines::Vector{SubString{String}})
 
             elseif !isnothing(hex_instruction_match)
 
+                # A hex_instruction comment specifies the binary machine code
+                # representation of the following assembly instruction.
                 short_address_str, byte_str = hex_instruction_match
                 last_short_address = parse(UInt16, short_address_str; base=16)
                 byte_str = replace(byte_str, isspace => "")
@@ -202,6 +220,61 @@ function parse_metadata(lines::Vector{SubString{String}})
 end
 
 
+########################################################### PARSING X86 ASSEMBLY
+
+
+const X86_REGISTERS = Dict{String,Symbol}(
+    "ah" => (:A, 8), "al" => (:A, 8), "ax" => (:A, 16), "eax" => (:A, 32), "rax" => (:A, 64),
+    "ch" => (:C, 8), "cl" => (:C, 8), "cx" => (:C, 16), "ecx" => (:C, 32), "rcx" => (:C, 64),
+    "dh" => (:D, 8), "dl" => (:D, 8), "dx" => (:D, 16), "edx" => (:D, 32), "rdx" => (:D, 64),
+    "bh" => (:B, 8), "bl" => (:B, 8), "bx" => (:B, 16), "ebx" => (:B, 32), "rbx" => (:B, 64),
+    "spl" => (:SP, 8), "sp" => (:SP, 16), "esp" => (:SP, 32), "rsp" => (:SP, 64),
+    "bpl" => (:BP, 8), "bp" => (:BP, 16), "ebp" => (:BP, 32), "rbp" => (:BP, 64),
+    "sil" => (:SI, 8), "si" => (:SI, 16), "esi" => (:SI, 32), "rsi" => (:SI, 64),
+    "dil" => (:DI, 8), "di" => (:DI, 16), "edi" => (:DI, 32), "rdi" => (:DI, 64),
+    "r8b" => (:R8, 8), "r8w" => (:R8, 16), "r8d" => (:R8, 32), "r8" => (:R8, 64),
+    "r9b" => (:R9, 8), "r9w" => (:R9, 16), "r9d" => (:R9, 32), "r9" => (:R9, 64),
+    "r10b" => (:R10, 8), "r10w" => (:R10, 16), "r10d" => (:R10, 32), "r10" => (:R10, 64),
+    "r11b" => (:R11, 8), "r11w" => (:R11, 16), "r11d" => (:R11, 32), "r11" => (:R11, 64),
+    "r12b" => (:R12, 8), "r12w" => (:R12, 16), "r12d" => (:R12, 32), "r12" => (:R12, 64),
+    "r13b" => (:R13, 8), "r13w" => (:R13, 16), "r13d" => (:R13, 32), "r13" => (:R13, 64),
+    "r14b" => (:R14, 8), "r14w" => (:R14, 16), "r14d" => (:R14, 32), "r14" => (:R14, 64),
+    "r15b" => (:R15, 8), "r15w" => (:R15, 16), "r15d" => (:R15, 32), "r15" => (:R15, 64),
+    "xmm0" => (:SSE0, 128), "ymm0" => (:SSE0, 256), "zmm0" => (:SSE0, 512),
+    "xmm1" => (:SSE1, 128), "ymm1" => (:SSE1, 256), "zmm1" => (:SSE1, 512),
+    "xmm2" => (:SSE2, 128), "ymm2" => (:SSE2, 256), "zmm2" => (:SSE2, 512),
+    "xmm3" => (:SSE3, 128), "ymm3" => (:SSE3, 256), "zmm3" => (:SSE3, 512),
+    "xmm4" => (:SSE4, 128), "ymm4" => (:SSE4, 256), "zmm4" => (:SSE4, 512),
+    "xmm5" => (:SSE5, 128), "ymm5" => (:SSE5, 256), "zmm5" => (:SSE5, 512),
+    "xmm6" => (:SSE6, 128), "ymm6" => (:SSE6, 256), "zmm6" => (:SSE6, 512),
+    "xmm7" => (:SSE7, 128), "ymm7" => (:SSE7, 256), "zmm7" => (:SSE7, 512),
+    "xmm8" => (:SSE8, 128), "ymm8" => (:SSE8, 256), "zmm8" => (:SSE8, 512),
+    "xmm9" => (:SSE9, 128), "ymm9" => (:SSE9, 256), "zmm9" => (:SSE9, 512),
+    "xmm10" => (:SSE10, 128), "ymm10" => (:SSE10, 256), "zmm10" => (:SSE10, 512),
+    "xmm11" => (:SSE11, 128), "ymm11" => (:SSE11, 256), "zmm11" => (:SSE11, 512),
+    "xmm12" => (:SSE12, 128), "ymm12" => (:SSE12, 256), "zmm12" => (:SSE12, 512),
+    "xmm13" => (:SSE13, 128), "ymm13" => (:SSE13, 256), "zmm13" => (:SSE13, 512),
+    "xmm14" => (:SSE14, 128), "ymm14" => (:SSE14, 256), "zmm14" => (:SSE14, 512),
+    "xmm15" => (:SSE15, 128), "ymm15" => (:SSE15, 256), "zmm15" => (:SSE15, 512),
+    "xmm16" => (:SSE16, 128), "ymm16" => (:SSE16, 256), "zmm16" => (:SSE16, 512),
+    "xmm17" => (:SSE17, 128), "ymm17" => (:SSE17, 256), "zmm17" => (:SSE17, 512),
+    "xmm18" => (:SSE18, 128), "ymm18" => (:SSE18, 256), "zmm18" => (:SSE18, 512),
+    "xmm19" => (:SSE19, 128), "ymm19" => (:SSE19, 256), "zmm19" => (:SSE19, 512),
+    "xmm20" => (:SSE20, 128), "ymm20" => (:SSE20, 256), "zmm20" => (:SSE20, 512),
+    "xmm21" => (:SSE21, 128), "ymm21" => (:SSE21, 256), "zmm21" => (:SSE21, 512),
+    "xmm22" => (:SSE22, 128), "ymm22" => (:SSE22, 256), "zmm22" => (:SSE22, 512),
+    "xmm23" => (:SSE23, 128), "ymm23" => (:SSE23, 256), "zmm23" => (:SSE23, 512),
+    "xmm24" => (:SSE24, 128), "ymm24" => (:SSE24, 256), "zmm24" => (:SSE24, 512),
+    "xmm25" => (:SSE25, 128), "ymm25" => (:SSE25, 256), "zmm25" => (:SSE25, 512),
+    "xmm26" => (:SSE26, 128), "ymm26" => (:SSE26, 256), "zmm26" => (:SSE26, 512),
+    "xmm27" => (:SSE27, 128), "ymm27" => (:SSE27, 256), "zmm27" => (:SSE27, 512),
+    "xmm28" => (:SSE28, 128), "ymm28" => (:SSE28, 256), "zmm28" => (:SSE28, 512),
+    "xmm29" => (:SSE29, 128), "ymm29" => (:SSE29, 256), "zmm29" => (:SSE29, 512),
+    "xmm30" => (:SSE30, 128), "ymm30" => (:SSE30, 256), "zmm30" => (:SSE30, 512),
+    "xmm31" => (:SSE31, 128), "ymm31" => (:SSE31, 256), "zmm31" => (:SSE31, 512),
+)
+
+
 ################################################################################
 
 
@@ -220,59 +293,6 @@ function view_asm(@nospecialize(f), @nospecialize(types...))
 end
 
 
-################################################################# REGISTER NAMES
-
-const X86_REGISTER_NAMES = Dict{String,Symbol}(
-    "ah" => :A, "al" => :A, "ax" => :A, "eax" => :A, "rax" => :A,
-    "ch" => :C, "cl" => :C, "cx" => :C, "ecx" => :C, "rcx" => :C,
-    "dh" => :D, "dl" => :D, "dx" => :D, "edx" => :D, "rdx" => :D,
-    "bh" => :B, "bl" => :B, "bx" => :B, "ebx" => :B, "rbx" => :B,
-    "spl" => :SP, "sp" => :SP, "esp" => :SP, "rsp" => :SP,
-    "bpl" => :BP, "bp" => :BP, "ebp" => :BP, "rbp" => :BP,
-    "sil" => :SI, "si" => :SI, "esi" => :SI, "rsi" => :SI,
-    "dil" => :DI, "di" => :DI, "edi" => :DI, "rdi" => :DI,
-    "r8b" => :R8, "r8w" => :R8, "r8d" => :R8, "r8" => :R8,
-    "r9b" => :R9, "r9w" => :R9, "r9d" => :R9, "r9" => :R9,
-    "r10b" => :R10, "r10w" => :R10, "r10d" => :R10, "r10" => :R10,
-    "r11b" => :R11, "r11w" => :R11, "r11d" => :R11, "r11" => :R11,
-    "r12b" => :R12, "r12w" => :R12, "r12d" => :R12, "r12" => :R12,
-    "r13b" => :R13, "r13w" => :R13, "r13d" => :R13, "r13" => :R13,
-    "r14b" => :R14, "r14w" => :R14, "r14d" => :R14, "r14" => :R14,
-    "r15b" => :R15, "r15w" => :R15, "r15d" => :R15, "r15" => :R15,
-    "xmm0" => :SSE0, "ymm0" => :SSE0, "zmm0" => :SSE0,
-    "xmm1" => :SSE1, "ymm1" => :SSE1, "zmm1" => :SSE1,
-    "xmm2" => :SSE2, "ymm2" => :SSE2, "zmm2" => :SSE2,
-    "xmm3" => :SSE3, "ymm3" => :SSE3, "zmm3" => :SSE3,
-    "xmm4" => :SSE4, "ymm4" => :SSE4, "zmm4" => :SSE4,
-    "xmm5" => :SSE5, "ymm5" => :SSE5, "zmm5" => :SSE5,
-    "xmm6" => :SSE6, "ymm6" => :SSE6, "zmm6" => :SSE6,
-    "xmm7" => :SSE7, "ymm7" => :SSE7, "zmm7" => :SSE7,
-    "xmm8" => :SSE8, "ymm8" => :SSE8, "zmm8" => :SSE8,
-    "xmm9" => :SSE9, "ymm9" => :SSE9, "zmm9" => :SSE9,
-    "xmm10" => :SSE10, "ymm10" => :SSE10, "zmm10" => :SSE10,
-    "xmm11" => :SSE11, "ymm11" => :SSE11, "zmm11" => :SSE11,
-    "xmm12" => :SSE12, "ymm12" => :SSE12, "zmm12" => :SSE12,
-    "xmm13" => :SSE13, "ymm13" => :SSE13, "zmm13" => :SSE13,
-    "xmm14" => :SSE14, "ymm14" => :SSE14, "zmm14" => :SSE14,
-    "xmm15" => :SSE15, "ymm15" => :SSE15, "zmm15" => :SSE15,
-    "xmm16" => :SSE16, "ymm16" => :SSE16, "zmm16" => :SSE16,
-    "xmm17" => :SSE17, "ymm17" => :SSE17, "zmm17" => :SSE17,
-    "xmm18" => :SSE18, "ymm18" => :SSE18, "zmm18" => :SSE18,
-    "xmm19" => :SSE19, "ymm19" => :SSE19, "zmm19" => :SSE19,
-    "xmm20" => :SSE20, "ymm20" => :SSE20, "zmm20" => :SSE20,
-    "xmm21" => :SSE21, "ymm21" => :SSE21, "zmm21" => :SSE21,
-    "xmm22" => :SSE22, "ymm22" => :SSE22, "zmm22" => :SSE22,
-    "xmm23" => :SSE23, "ymm23" => :SSE23, "zmm23" => :SSE23,
-    "xmm24" => :SSE24, "ymm24" => :SSE24, "zmm24" => :SSE24,
-    "xmm25" => :SSE25, "ymm25" => :SSE25, "zmm25" => :SSE25,
-    "xmm26" => :SSE26, "ymm26" => :SSE26, "zmm26" => :SSE26,
-    "xmm27" => :SSE27, "ymm27" => :SSE27, "zmm27" => :SSE27,
-    "xmm28" => :SSE28, "ymm28" => :SSE28, "zmm28" => :SSE28,
-    "xmm29" => :SSE29, "ymm29" => :SSE29, "zmm29" => :SSE29,
-    "xmm30" => :SSE30, "ymm30" => :SSE30, "zmm30" => :SSE30,
-    "xmm31" => :SSE31, "ymm31" => :SSE31, "zmm31" => :SSE31,
-)
-
 ################################################################################
 
 #=
@@ -281,8 +301,6 @@ export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
     AssemblyImmediate, AssemblyOffset, AssemblyStatement, AssemblyComment,
     AssemblyLabel, AssemblyInstruction,
     parsed_asm, asm_offsets, view_asm
-
-using InteractiveUtils: _dump_function
 
 ############################################################## ASSEMBLY OPERANDS
 
