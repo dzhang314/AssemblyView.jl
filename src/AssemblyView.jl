@@ -177,6 +177,8 @@ function parse_metadata(lines::Vector{SubString{String}})
 
                 # A hex_instruction comment specifies the binary machine code
                 # representation of the following assembly instruction.
+                # AssemblyView.jl makes no effort to decode this; we simply
+                # store it and pass it through to user.
                 short_address_str, byte_str = hex_instruction_match
                 last_short_address = parse(UInt16, short_address_str; base=16)
                 byte_str = replace(byte_str, isspace => "")
