@@ -436,6 +436,31 @@ Base.print(io::IO, op::X86IntegerOperand) = print(io, op.value)
 ################################################################################
 
 
+export parsed_asm
+
+
+function parsed_asm(@nospecialize(f), @nospecialize(types...))
+    @static if Sys.ARCH == :x86_64
+        code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
+        current_address = code_origin % UInt16
+        for line in lines
+            if line isa AssemblyInstruction
+                insn = X86Instruction(line)
+            elseif line isa AssemblyLabel
+            else
+                @assert false
+            end
+        end
+    else
+        error("Parsing assembly for architecture $(Sys.ARCH) " *
+              "is not yet supported by AssemblyView.jl")
+    end
+end
+
+
+################################################################################
+
+
 export view_asm
 
 
