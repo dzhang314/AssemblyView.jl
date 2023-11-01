@@ -27,7 +27,7 @@ const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
 const CODE_INFO_REGEX = r"^; code origin: ([0-9a-f]+), code size: ([0-9]+)$"
-const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}): ([0-9a-f ]*)$"
+const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}): ([0-9a-f ]*)(?:\s*#.*)?$"
 
 
 struct SourceLocation
@@ -225,7 +225,7 @@ end
 ########################################################### PARSING X86 ASSEMBLY
 
 
-const X86_REGISTERS = Dict{String,Symbol}(
+const X86_REGISTERS = Dict{String,Tuple{Symbol,Int}}(
     "ah" => (:A, 8), "al" => (:A, 8), "ax" => (:A, 16), "eax" => (:A, 32), "rax" => (:A, 64),
     "ch" => (:C, 8), "cl" => (:C, 8), "cx" => (:C, 16), "ecx" => (:C, 32), "rcx" => (:C, 64),
     "dh" => (:D, 8), "dl" => (:D, 8), "dx" => (:D, 16), "edx" => (:D, 32), "rdx" => (:D, 64),
@@ -277,6 +277,162 @@ const X86_REGISTERS = Dict{String,Symbol}(
 )
 
 
+const X86_POINTER_SIZES = Dict{String,Int}(
+    "byte" => 8, "word" => 16, "dword" => 32, "qword" => 64,
+    "tbyte" => 80, "xmmword" => 128, "ymmword" => 256, "zmmword" => 512,
+)
+
+
+const X86_ADDRESS_OPERAND_REGEX = r"^\[(.*)\]$"
+const X86_POINTER_OPERAND_REGEX = r"^(.*) ptr \[(.*)\]$"
+const X86_OFFSET_OPERAND_REGEX = r"^offset (.*)$"
+const X86_LABEL_OPERAND_REGEX = r"^L[0-9]+$"
+const X86_INTEGER_OPERAND_REGEX = r"^-?[0-9]+$"
+
+
+struct X86RegisterOperand
+    id::Symbol
+    size::Int
+    origin::Int
+end
+
+
+function X86RegisterOperand(name::SubString{String})
+    @assert haskey(X86_REGISTERS, name)
+    id, size = X86_REGISTERS[name]
+    if endswith(name, 'h')
+        @assert size == 8
+        return X86RegisterOperand(id, size, 8)
+    else
+        return X86RegisterOperand(id, size, 0)
+    end
+end
+
+
+struct X86AddressOperand
+    expr::SubString{String}
+end
+
+
+struct X86PointerOperand
+    address::X86AddressOperand
+    size::Int
+end
+
+
+struct X86OffsetOperand
+    name::SubString{String}
+end
+
+
+struct X86LabelOperand
+    name::SubString{String}
+end
+
+
+struct X86IntegerOperand
+    value::Int
+end
+
+
+struct X86SymbolOperand
+    name::SubString{String}
+end
+
+
+const X86Operand = Union{
+    X86RegisterOperand,
+    X86AddressOperand,
+    X86PointerOperand,
+    X86OffsetOperand,
+    X86LabelOperand,
+    X86IntegerOperand,
+    X86SymbolOperand,
+}
+
+
+function parse_x86_operand(op::SubString{String})
+    if haskey(X86_REGISTERS, op)
+        return X86RegisterOperand(op)
+    else
+        address_match = match(X86_ADDRESS_OPERAND_REGEX, op)
+        pointer_match = match(X86_POINTER_OPERAND_REGEX, op)
+        offset_match = match(X86_OFFSET_OPERAND_REGEX, op)
+        label_match = match(X86_LABEL_OPERAND_REGEX, op)
+        integer_match = match(X86_INTEGER_OPERAND_REGEX, op)
+        # Assert that at most one match occurred.
+        @assert +(
+            !isnothing(address_match),
+            !isnothing(pointer_match),
+            !isnothing(offset_match),
+            !isnothing(label_match),
+            !isnothing(integer_match),
+        ) <= 1
+        if !isnothing(address_match)
+            return X86AddressOperand(address_match[1])
+        elseif !isnothing(pointer_match)
+            return X86PointerOperand(
+                X86AddressOperand(pointer_match[2]),
+                X86_POINTER_SIZES[pointer_match[1]],
+            )
+        elseif !isnothing(offset_match)
+            return X86OffsetOperand(offset_match[1])
+        elseif !isnothing(label_match)
+            return X86LabelOperand(op)
+        elseif !isnothing(integer_match)
+            return X86IntegerOperand(parse(Int, op; base=10))
+        else
+            return X86SymbolOperand(op)
+        end
+    end
+end
+
+
+struct X86Instruction
+    opcode::SubString{String}
+    operands::Vector{X86Operand}
+    comment::Union{Nothing,SubString{String}}
+    short_address::UInt16
+    binary::Vector{UInt8}
+    context::Vector{SourceContext}
+end
+
+
+function X86Instruction(instruction::AssemblyInstruction)
+    code = instruction.code
+    @assert startswith(code, '\t')
+    comment_index = findfirst('#', code)
+    comment = isnothing(comment_index) ? nothing : code[comment_index:end]
+    code = strip(isnothing(comment_index) ? code : code[1:comment_index-1])
+    tab_index = findfirst('\t', code)
+    if isnothing(tab_index)
+        return X86Instruction(
+            code, X86Operand[], comment,
+            instruction.short_address, instruction.binary, instruction.context
+        )
+    else
+        opcode = code[1:tab_index-1]
+        operands = (opcode == "nop") ? X86Operand[] : parse_x86_operand.(
+            strip.(split(code[tab_index+1:end], ','))
+        )
+        return X86Instruction(
+            opcode, operands, comment,
+            instruction.short_address, instruction.binary, instruction.context
+        )
+    end
+end
+
+
+Base.print(io::IO, op::X86RegisterOperand) =
+    print(io, op.id, '[', op.origin, ':', op.origin + op.size - 1, ']')
+Base.print(io::IO, op::X86AddressOperand) = print(io, op.expr)
+Base.print(io::IO, op::X86PointerOperand) =
+    print(io, "*(", op.address.expr, ")[0:", op.size - 1, ']')
+Base.print(io::IO, op::X86OffsetOperand) = print(io, "offset ", op.name)
+Base.print(io::IO, op::X86LabelOperand) = print(io, op.name)
+Base.print(io::IO, op::X86IntegerOperand) = print(io, op.value)
+
+
 ################################################################################
 
 
@@ -287,9 +443,17 @@ function view_asm(@nospecialize(f), @nospecialize(types...))
     code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
     for line in lines
         if line isa AssemblyInstruction
-            println(line.code)
+            @static if Sys.ARCH == :x86_64
+                instruction = X86Instruction(line)
+                println(
+                    '\t', instruction.opcode, '\t',
+                    join(instruction.operands, ", ")
+                )
+            else
+                println('\t', line.code)
+            end
         elseif line isa AssemblyLabel
-            println(line.name)
+            println(line.name, ':')
         end
     end
 end
