@@ -20,11 +20,14 @@ end
 ################################################################################
 
 
+using Base.Iterators: partition
+
+
 const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
 const CODE_INFO_REGEX = r"^; code origin: ([0-9a-f]+), code size: ([0-9]+)$"
-const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}):((?: [0-9a-f]{2})*)$"
+const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}): ([0-9a-f ]*)$"
 
 
 struct SourceLocation
@@ -158,9 +161,11 @@ function parse_metadata(lines::Vector{SubString{String}})
 
                 short_address_str, byte_str = hex_instruction_match
                 last_short_address = parse(UInt16, short_address_str; base=16)
+                byte_str = replace(byte_str, isspace => "")
+                @assert iseven(length(byte_str))
                 last_binary = [
                     parse(UInt8, byte; base=16)
-                    for byte in split(byte_str)
+                    for byte in partition(byte_str, 2)
                 ]
 
             else
