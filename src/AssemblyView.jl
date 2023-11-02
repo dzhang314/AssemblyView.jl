@@ -443,14 +443,23 @@ function parsed_asm(@nospecialize(f), @nospecialize(types...))
     @static if Sys.ARCH == :x86_64
         code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
         current_address = code_origin % UInt16
+        current_size = 0
+        result = Union{X86Instruction,AssemblyLabel}[]
         for line in lines
             if line isa AssemblyInstruction
-                insn = X86Instruction(line)
+                instruction = X86Instruction(line)
+                @assert instruction.short_address == current_address
+                current_address += length(instruction.binary) % UInt16
+                current_size += length(instruction.binary)
+                push!(result, instruction)
             elseif line isa AssemblyLabel
+                push!(result, line)
             else
                 @assert false
             end
         end
+        @assert current_size == code_size
+        return result
     else
         error("Parsing assembly for architecture $(Sys.ARCH) " *
               "is not yet supported by AssemblyView.jl")
