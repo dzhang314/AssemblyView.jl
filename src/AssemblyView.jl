@@ -433,7 +433,7 @@ Base.print(io::IO, op::X86LabelOperand) = print(io, op.name)
 Base.print(io::IO, op::X86IntegerOperand) = print(io, op.value)
 
 
-################################################################################
+##################################################### ASSEMBLY PARSING INTERFACE
 
 
 export parsed_asm
@@ -467,254 +467,110 @@ function parsed_asm(@nospecialize(f), @nospecialize(types...))
 end
 
 
-################################################################################
+########################################################### VIEWING X86 ASSEMBLY
+
+
+const X86_PRINT_HANDLERS =
+    Dict{Tuple{String,Vector{DataType}},Function}()
+
+
+X86_PRINT_HANDLERS[("nop", DataType[])] =
+    instruction::X86Instruction -> nothing
+
+
+X86_PRINT_HANDLERS[("ret", DataType[])] =
+    instruction::X86Instruction -> println("\treturn;")
+
+
+X86_PRINT_HANDLERS[(
+    "vaddpd",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .+ $(c.id);")
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vsubpd",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .- $(c.id);")
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vmulpd",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .* $(c.id);")
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vdivpd",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) ./ $(c.id);")
+    return nothing
+end
+
+
+##################################################### ASSEMBLY VIEWING INTERFACE
 
 
 export view_asm
 
 
 function view_asm(@nospecialize(f), @nospecialize(types...))
-    code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
-    for line in lines
-        if line isa AssemblyInstruction
-            @static if Sys.ARCH == :x86_64
-                instruction = X86Instruction(line)
-                println(
-                    '\t', instruction.opcode, '\t',
-                    join(instruction.operands, ", ")
-                )
+    @static if Sys.ARCH == :x86_64
+        for line in parsed_asm(f, types...)
+            if line isa X86Instruction
+                key = (line.opcode, [typeof(op) for op in line.operands])
+                if haskey(X86_PRINT_HANDLERS, key)
+                    X86_PRINT_HANDLERS[key](line)
+                else
+                    print('\t', line.opcode, '\t', join(line.operands, ", "))
+                    if !isnothing(line.comment)
+                        println('\t', line.comment)
+                    else
+                        println()
+                    end
+                end
+            elseif line isa AssemblyLabel
+                println(line.name, ':')
             else
-                println('\t', line.code)
+                @assert false
             end
-        elseif line isa AssemblyLabel
-            println(line.name, ':')
+        end
+    else
+        _, _, lines = parse_metadata(assembly_lines(f, types))
+        for line in lines
+            if line isa AssemblyInstruction
+                println(line.code)
+            elseif line isa AssemblyLabel
+                println(line.name, ':')
+            else
+                @assert false
+            end
         end
     end
 end
 
-
-################################################################################
 
 #=
 
-export AssemblyOperand, AssemblyRegister, AssemblyMemoryOperand,
-    AssemblyImmediate, AssemblyOffset, AssemblyStatement, AssemblyComment,
-    AssemblyLabel, AssemblyInstruction,
-    parsed_asm, asm_offsets, view_asm
-
-############################################################## ASSEMBLY OPERANDS
-
-
-abstract type AssemblyOperand end
-
-
-struct AssemblyRegister <: AssemblyOperand
-    name::String
-end
-
-Base.print(io::IO, reg::AssemblyRegister) = print(io, reg.name)
-
-
-struct AssemblyMemoryOperand <: AssemblyOperand
-    type::String
-    address::String
-end
-
-Base.print(io::IO, mem::AssemblyMemoryOperand) =
-    print(io, "*($(mem.address))")
-
-
-struct AssemblyImmediate <: AssemblyOperand
-    value::String
-end
-
-Base.print(io::IO, imm::AssemblyImmediate) = print(io, imm.value)
-
-
-struct AssemblyOffset <: AssemblyOperand
-    name::String
-end
-
-Base.print(io::IO, off::AssemblyOffset) = print(io, "offset ", off.name)
-
-
-############################################################ ASSEMBLY STATEMENTS
-
-
-abstract type AssemblyStatement end
-
-
-struct AssemblyComment <: AssemblyStatement
-    contents::String
-end
-
-Base.print(io::IO, comment::AssemblyComment) = print(io, comment.contents)
-
-
-struct AssemblyLabel <: AssemblyStatement
-    name::String
-end
-
-Base.print(io::IO, label::AssemblyLabel) = print(io, label.name, ':')
-
-
-struct AssemblyInstruction <: AssemblyStatement
-    opcode::String
-    operands::Vector{AssemblyOperand}
-    comment::String
-end
-
-AssemblyInstruction(instruction::AbstractString) =
-    AssemblyInstruction(String(instruction), AssemblyOperand[], "")
-
-AssemblyInstruction(instruction::AbstractString,
-                    operands::Vector{T}) where {T <: AssemblyOperand} =
-    AssemblyInstruction(String(instruction), operands, "")
-
-
-const PRINT_HANDLERS = Dict{String,Function}()
-
-function Base.print(io::IO, instr::AssemblyInstruction)
-    if haskey(PRINT_HANDLERS, instr.opcode)
-        PRINT_HANDLERS[instr.opcode](io, instr)
-    else
-        print(io, rpad('{' * instr.opcode * '}', 16))
-        for (i, op) in enumerate(instr.operands)
-            (i > 1) && print(io, ", ")
-            print(io, op)
-        end
-        if !isempty(instr.comment)
-            print(io, " // ", instr.comment)
-        end
-    end
-    return nothing
-end
-
-
 ############################################################### ASSEMBLY PARSING
-
-
-function parse_assembly_operand(op::AbstractString)
-    op = strip(op)
-    if any(op == reg_name for reg_name in keys(X86_REGISTER_NAMES))
-        return AssemblyRegister(op)
-    end
-    mem_op_match = match(r"([a-z]+) ptr \[(.*)\]", op)
-    if !isnothing(mem_op_match)
-        return AssemblyMemoryOperand(mem_op_match[1], mem_op_match[2])
-    end
-    offset_match = match(r"offset (.*)", op)
-    if !isnothing(offset_match)
-        return AssemblyOffset(offset_match[1])
-    end
-    # TODO: How to parse immediates?
-    return AssemblyImmediate(op)
-end
-
-
-function parse_assembly_statement(stmt::AbstractString)
-
-    # Return nothing for non-statements.
-    if (stmt == "\t.text") || isempty(strip(stmt))
-        return nothing
-    end
-
-    # Assembly comments begin with a semicolon.
-    if startswith(strip(stmt), ';')
-        return AssemblyComment(stmt)
-    end
-
-    # Tabs separate parts of an assembly statement.
-    tokens = split(stmt, '\t')
-
-    # If the statement contains no tabs, then it is a label.
-    if length(tokens) == 1
-        @assert endswith(tokens[1], ':')
-        label_name = tokens[1][1:end-1]
-        @assert !isempty(label_name)
-        return AssemblyLabel(label_name)
-
-    # If the statement begins with a tab, then it is an instruction.
-    else
-        @assert length(tokens) > 1
-        @assert isempty(tokens[1])
-
-        # If there is no second tab, then the instruction takes no operands.
-        if length(tokens) == 2
-            return AssemblyInstruction(tokens[2])
-
-        # If there is a second tab, then the instruction operands follow it.
-        else
-            @assert length(tokens) == 3
-
-            # Some instructions are output with a #-delimited comment.
-            arg_tokens = split(tokens[3], " # ")
-            if length(arg_tokens) == 1
-                return AssemblyInstruction(tokens[2],
-                    parse_assembly_operand.(split(arg_tokens[1], ',')))
-            else
-                @assert length(arg_tokens) == 2
-                return AssemblyInstruction(tokens[2],
-                    parse_assembly_operand.(split(arg_tokens[1], ',')),
-                    strip(arg_tokens[2]))
-            end
-        end
-    end
-
-    error("AssemblyView.jl INTERNAL ERROR: Unable to parse" *
-          " assembly statement <<<$stmt>>>.")
-end
-
-
-function parsed_asm(@nospecialize(func), @nospecialize(types...);
-                    keep_comments::Bool=false)::Vector{AssemblyStatement}
-
-    # Support either a tuple of argument types or varargs.
-    if (length(types) == 1) && !(types[1] isa Type)
-        types = types[1]
-    end
-
-    if (VERSION.major > 1) || (VERSION.major == 1 && VERSION.minor >= 7)
-
-        # Call internal Julia API to generate x86 assembly code.
-        code = _dump_function(func, types,
-            true,    # Generate native code (as opposed to LLVM IR).
-            false,   # Don't generate wrapper code.
-            true,    # (strip_ir_metadata) Ignored when dumping native code.
-            true,    # (dump_module) Ignored when dumping native code.
-            :intel,  # I prefer Intel assembly syntax.
-            true,    # (optimize) Ignored when dumping native code.
-            :source, # TODO: What does debuginfo=:source mean?
-            false    # Don't display binary machine code.
-        )
-
-    else
-
-        # Call internal Julia API to generate x86 assembly code.
-        code = _dump_function(func, types,
-            true,   # Generate native code (as opposed to LLVM IR).
-            false,  # Don't generate wrapper code.
-            true,   # (strip_ir_metadata) Ignored when dumping native code.
-            true,   # (dump_module) Ignored when dumping native code.
-            :intel, # I prefer Intel assembly syntax.
-            true,   # (optimize) Ignored when dumping native code.
-            :source # TODO: What does debuginfo=:source mean?
-        )
-
-    end
-
-    # Parse each line of code, discarding comments if requested.
-    result = AssemblyStatement[]
-    for stmt in split(code, '\n')
-        parsed_stmt = parse_assembly_statement(stmt)
-        if !isnothing(parsed_stmt) && (keep_comments ||
-                                       !(parsed_stmt isa AssemblyComment))
-            push!(result, parsed_stmt)
-        end
-    end
-
-    return result
-end
 
 
 function asm_offsets(
