@@ -85,7 +85,8 @@ function parse_metadata(lines::Vector{SubString{String}})
 
     for line in lines
 
-        if line == "\t.text"
+        if ((line == "\t.text") ||
+            (line == "\t.section\t__TEXT,__text,regular,pure_instructions"))
 
             # Ignore .text section header.
             continue
