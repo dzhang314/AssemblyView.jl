@@ -275,7 +275,7 @@ const X86_POINTER_SIZES = Dict{String,Int}(
 const X86_ADDRESS_OPERAND_REGEX = r"^\[(.*)\]$"
 const X86_POINTER_OPERAND_REGEX = r"^(.*) ptr \[(.*)\]$"
 const X86_OFFSET_OPERAND_REGEX = r"^offset (.*)$"
-const X86_LABEL_OPERAND_REGEX = r"^L[0-9]+$"
+const X86_LABEL_OPERAND_REGEX = r"^\.LBB0_[0-9]+$"
 const X86_INTEGER_OPERAND_REGEX = r"^-?[0-9]+$"
 
 
@@ -350,14 +350,13 @@ function parse_x86_operand(op::SubString{String})
         offset_match = match(X86_OFFSET_OPERAND_REGEX, op)
         label_match = match(X86_LABEL_OPERAND_REGEX, op)
         integer_match = match(X86_INTEGER_OPERAND_REGEX, op)
-        # Assert that at most one match occurred.
         @assert +(
             !isnothing(address_match),
             !isnothing(pointer_match),
             !isnothing(offset_match),
             !isnothing(label_match),
             !isnothing(integer_match),
-        ) <= 1
+        ) <= 1 # At most one match can occur.
         if !isnothing(address_match)
             return X86AddressOperand(address_match[1])
         elseif !isnothing(pointer_match)
@@ -382,8 +381,6 @@ struct X86Instruction
     opcode::SubString{String}
     operands::Vector{X86Operand}
     comment::Union{Nothing,SubString{String}}
-    short_address::UInt16
-    binary::Vector{UInt8}
     context::Vector{SourceContext}
 end
 
@@ -391,31 +388,34 @@ end
 function X86Instruction(instruction::AssemblyInstruction)
     code = instruction.code
     @assert startswith(code, '\t')
-    comment_index = findfirst('#', code)
-    comment = isnothing(comment_index) ? nothing : code[comment_index:end]
-    code = strip(isnothing(comment_index) ? code : code[1:comment_index-1])
+    hash_index = findfirst('#', code)
+    if isnothing(hash_index)
+        comment = nothing
+        code = strip(code)
+    else
+        comment = @view code[hash_index:end]
+        code = strip(@view code[begin:hash_index-1])
+    end
     tab_index = findfirst('\t', code)
     if isnothing(tab_index)
-        return X86Instruction(
-            code, X86Operand[], comment,
-            instruction.short_address, instruction.binary, instruction.context
-        )
+        return X86Instruction(code, X86Operand[], comment, instruction.context)
     else
-        opcode = code[1:tab_index-1]
-        operands = (opcode == "nop") ? X86Operand[] : parse_x86_operand.(
-            strip.(split(code[tab_index+1:end], ','))
-        )
-        return X86Instruction(
-            opcode, operands, comment,
-            instruction.short_address, instruction.binary, instruction.context
-        )
+        opcode = @view code[begin:tab_index-1]
+        if opcode == "nop"
+            return X86Instruction(
+                opcode, X86Operand[], comment, instruction.context)
+        end
+        operands_string = @view code[tab_index+1:end]
+        operands = parse_x86_operand.(strip.(split(operands_string, ',')))
+        return X86Instruction(opcode, operands, comment, instruction.context)
     end
 end
 
 
 function Base.print(io::IO, op::X86RegisterOperand)
     printstyled(io, op.id; bold=true)
-    printstyled(io, '[', op.origin, ':', op.origin + op.size - 1, ']'; color=:yellow)
+    printstyled(io, '[', op.origin, ':', op.origin + op.size - 1, ']';
+        color=:yellow)
     return nothing
 end
 
@@ -439,6 +439,8 @@ Base.print(io::IO, op::X86LabelOperand) =
     printstyled(io, op.name; color=:red, bold=true)
 Base.print(io::IO, op::X86IntegerOperand) =
     printstyled(io, op.value; color=:yellow)
+Base.print(io::IO, op::X86SymbolOperand) =
+    printstyled(io, "<<<", op.name, ">>>"; color=:red, bold=true)
 
 
 ##################################################### ASSEMBLY PARSING INTERFACE
@@ -449,24 +451,17 @@ export parsed_asm
 
 function parsed_asm(@nospecialize(f), @nospecialize(types...))
     @static if Sys.ARCH == :x86_64
-        code_origin, code_size, lines = parse_metadata(assembly_lines(f, types))
-        current_address = code_origin % UInt16
-        current_size = 0
+        lines = parse_metadata(assembly_lines(f, types))
         result = Union{X86Instruction,AssemblyLabel}[]
         for line in lines
             if line isa AssemblyInstruction
-                instruction = X86Instruction(line)
-                @assert instruction.short_address == current_address
-                current_address += length(instruction.binary) % UInt16
-                current_size += length(instruction.binary)
-                push!(result, instruction)
+                push!(result, X86Instruction(line))
             elseif line isa AssemblyLabel
                 push!(result, line)
             else
                 @assert false
             end
         end
-        @assert current_size == code_size
         return result
     else
         error("Parsing assembly for architecture $(Sys.ARCH) " *
@@ -577,12 +572,12 @@ function view_asm(@nospecialize(f), @nospecialize(types...))
             end
         end
     else
-        _, _, lines = parse_metadata(assembly_lines(f, types))
-        for line in lines
+        for line in parse_metadata(assembly_lines(f, types))
             if line isa AssemblyInstruction
                 println(line.code)
             elseif line isa AssemblyLabel
-                println(line.name, ':')
+                printstyled(line.name; color=:red, bold=true)
+                println(':')
             else
                 @assert false
             end
