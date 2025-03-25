@@ -190,27 +190,19 @@ function parse_metadata(lines::Vector{SubString{String}})
                 ]
 
             else
-
                 @warn "Ignoring assembly comment in unrecognized format: $line"
-
             end
 
         elseif startswith(line, '\t')
-
             @assert !isnothing(last_short_address)
             @assert !isnothing(last_binary)
             push!(result, AssemblyInstruction(
                 line, last_short_address, last_binary, copy(context_stack)
             ))
-
         elseif endswith(line, ':')
-
             push!(result, AssemblyLabel(line[1:end-1]))
-
         else
-
             @warn "Ignoring assembly line in unrecognized format: $line"
-
         end
 
     end
@@ -226,15 +218,15 @@ end
 ########################################################### PARSING X86 ASSEMBLY
 
 
-const X86_REGISTERS = Dict{String,Tuple{Symbol,Int}}(
-    "ah" => (:A, 8), "al" => (:A, 8), "ax" => (:A, 16), "eax" => (:A, 32), "rax" => (:A, 64),
-    "ch" => (:C, 8), "cl" => (:C, 8), "cx" => (:C, 16), "ecx" => (:C, 32), "rcx" => (:C, 64),
-    "dh" => (:D, 8), "dl" => (:D, 8), "dx" => (:D, 16), "edx" => (:D, 32), "rdx" => (:D, 64),
-    "bh" => (:B, 8), "bl" => (:B, 8), "bx" => (:B, 16), "ebx" => (:B, 32), "rbx" => (:B, 64),
-    "spl" => (:SP, 8), "sp" => (:SP, 16), "esp" => (:SP, 32), "rsp" => (:SP, 64),
-    "bpl" => (:BP, 8), "bp" => (:BP, 16), "ebp" => (:BP, 32), "rbp" => (:BP, 64),
-    "sil" => (:SI, 8), "si" => (:SI, 16), "esi" => (:SI, 32), "rsi" => (:SI, 64),
-    "dil" => (:DI, 8), "di" => (:DI, 16), "edi" => (:DI, 32), "rdi" => (:DI, 64),
+const X86_REGISTERS = Dict{String,Tuple{Symbol,Int}}([
+    "al" => (:R0, 8), "ah" => (:R0, 8), "ax" => (:R0, 16), "eax" => (:R0, 32), "rax" => (:R0, 64),
+    "cl" => (:R1, 8), "ch" => (:R1, 8), "cx" => (:R1, 16), "ecx" => (:R1, 32), "rcx" => (:R1, 64),
+    "dl" => (:R2, 8), "dh" => (:R2, 8), "dx" => (:R2, 16), "edx" => (:R2, 32), "rdx" => (:R2, 64),
+    "bl" => (:R3, 8), "bh" => (:R3, 8), "bx" => (:R3, 16), "ebx" => (:R3, 32), "rbx" => (:R3, 64),
+    "spl" => (:R4, 8), "sp" => (:R4, 16), "esp" => (:R4, 32), "rsp" => (:R4, 64),
+    "bpl" => (:R5, 8), "bp" => (:R5, 16), "ebp" => (:R5, 32), "rbp" => (:R5, 64),
+    "sil" => (:R6, 8), "si" => (:R6, 16), "esi" => (:R6, 32), "rsi" => (:R6, 64),
+    "dil" => (:R7, 8), "di" => (:R7, 16), "edi" => (:R7, 32), "rdi" => (:R7, 64),
     "r8b" => (:R8, 8), "r8w" => (:R8, 16), "r8d" => (:R8, 32), "r8" => (:R8, 64),
     "r9b" => (:R9, 8), "r9w" => (:R9, 16), "r9d" => (:R9, 32), "r9" => (:R9, 64),
     "r10b" => (:R10, 8), "r10w" => (:R10, 16), "r10d" => (:R10, 32), "r10" => (:R10, 64),
@@ -243,39 +235,41 @@ const X86_REGISTERS = Dict{String,Tuple{Symbol,Int}}(
     "r13b" => (:R13, 8), "r13w" => (:R13, 16), "r13d" => (:R13, 32), "r13" => (:R13, 64),
     "r14b" => (:R14, 8), "r14w" => (:R14, 16), "r14d" => (:R14, 32), "r14" => (:R14, 64),
     "r15b" => (:R15, 8), "r15w" => (:R15, 16), "r15d" => (:R15, 32), "r15" => (:R15, 64),
-    "xmm0" => (:SSE0, 128), "ymm0" => (:SSE0, 256), "zmm0" => (:SSE0, 512),
-    "xmm1" => (:SSE1, 128), "ymm1" => (:SSE1, 256), "zmm1" => (:SSE1, 512),
-    "xmm2" => (:SSE2, 128), "ymm2" => (:SSE2, 256), "zmm2" => (:SSE2, 512),
-    "xmm3" => (:SSE3, 128), "ymm3" => (:SSE3, 256), "zmm3" => (:SSE3, 512),
-    "xmm4" => (:SSE4, 128), "ymm4" => (:SSE4, 256), "zmm4" => (:SSE4, 512),
-    "xmm5" => (:SSE5, 128), "ymm5" => (:SSE5, 256), "zmm5" => (:SSE5, 512),
-    "xmm6" => (:SSE6, 128), "ymm6" => (:SSE6, 256), "zmm6" => (:SSE6, 512),
-    "xmm7" => (:SSE7, 128), "ymm7" => (:SSE7, 256), "zmm7" => (:SSE7, 512),
-    "xmm8" => (:SSE8, 128), "ymm8" => (:SSE8, 256), "zmm8" => (:SSE8, 512),
-    "xmm9" => (:SSE9, 128), "ymm9" => (:SSE9, 256), "zmm9" => (:SSE9, 512),
-    "xmm10" => (:SSE10, 128), "ymm10" => (:SSE10, 256), "zmm10" => (:SSE10, 512),
-    "xmm11" => (:SSE11, 128), "ymm11" => (:SSE11, 256), "zmm11" => (:SSE11, 512),
-    "xmm12" => (:SSE12, 128), "ymm12" => (:SSE12, 256), "zmm12" => (:SSE12, 512),
-    "xmm13" => (:SSE13, 128), "ymm13" => (:SSE13, 256), "zmm13" => (:SSE13, 512),
-    "xmm14" => (:SSE14, 128), "ymm14" => (:SSE14, 256), "zmm14" => (:SSE14, 512),
-    "xmm15" => (:SSE15, 128), "ymm15" => (:SSE15, 256), "zmm15" => (:SSE15, 512),
-    "xmm16" => (:SSE16, 128), "ymm16" => (:SSE16, 256), "zmm16" => (:SSE16, 512),
-    "xmm17" => (:SSE17, 128), "ymm17" => (:SSE17, 256), "zmm17" => (:SSE17, 512),
-    "xmm18" => (:SSE18, 128), "ymm18" => (:SSE18, 256), "zmm18" => (:SSE18, 512),
-    "xmm19" => (:SSE19, 128), "ymm19" => (:SSE19, 256), "zmm19" => (:SSE19, 512),
-    "xmm20" => (:SSE20, 128), "ymm20" => (:SSE20, 256), "zmm20" => (:SSE20, 512),
-    "xmm21" => (:SSE21, 128), "ymm21" => (:SSE21, 256), "zmm21" => (:SSE21, 512),
-    "xmm22" => (:SSE22, 128), "ymm22" => (:SSE22, 256), "zmm22" => (:SSE22, 512),
-    "xmm23" => (:SSE23, 128), "ymm23" => (:SSE23, 256), "zmm23" => (:SSE23, 512),
-    "xmm24" => (:SSE24, 128), "ymm24" => (:SSE24, 256), "zmm24" => (:SSE24, 512),
-    "xmm25" => (:SSE25, 128), "ymm25" => (:SSE25, 256), "zmm25" => (:SSE25, 512),
-    "xmm26" => (:SSE26, 128), "ymm26" => (:SSE26, 256), "zmm26" => (:SSE26, 512),
-    "xmm27" => (:SSE27, 128), "ymm27" => (:SSE27, 256), "zmm27" => (:SSE27, 512),
-    "xmm28" => (:SSE28, 128), "ymm28" => (:SSE28, 256), "zmm28" => (:SSE28, 512),
-    "xmm29" => (:SSE29, 128), "ymm29" => (:SSE29, 256), "zmm29" => (:SSE29, 512),
-    "xmm30" => (:SSE30, 128), "ymm30" => (:SSE30, 256), "zmm30" => (:SSE30, 512),
-    "xmm31" => (:SSE31, 128), "ymm31" => (:SSE31, 256), "zmm31" => (:SSE31, 512),
-)
+    "xmm0" => (:SIMD0, 128), "ymm0" => (:SIMD0, 256), "zmm0" => (:SIMD0, 512),
+    "xmm1" => (:SIMD1, 128), "ymm1" => (:SIMD1, 256), "zmm1" => (:SIMD1, 512),
+    "xmm2" => (:SIMD2, 128), "ymm2" => (:SIMD2, 256), "zmm2" => (:SIMD2, 512),
+    "xmm3" => (:SIMD3, 128), "ymm3" => (:SIMD3, 256), "zmm3" => (:SIMD3, 512),
+    "xmm4" => (:SIMD4, 128), "ymm4" => (:SIMD4, 256), "zmm4" => (:SIMD4, 512),
+    "xmm5" => (:SIMD5, 128), "ymm5" => (:SIMD5, 256), "zmm5" => (:SIMD5, 512),
+    "xmm6" => (:SIMD6, 128), "ymm6" => (:SIMD6, 256), "zmm6" => (:SIMD6, 512),
+    "xmm7" => (:SIMD7, 128), "ymm7" => (:SIMD7, 256), "zmm7" => (:SIMD7, 512),
+    "xmm8" => (:SIMD8, 128), "ymm8" => (:SIMD8, 256), "zmm8" => (:SIMD8, 512),
+    "xmm9" => (:SIMD9, 128), "ymm9" => (:SIMD9, 256), "zmm9" => (:SIMD9, 512),
+    "xmm10" => (:SIMD10, 128), "ymm10" => (:SIMD10, 256), "zmm10" => (:SIMD10, 512),
+    "xmm11" => (:SIMD11, 128), "ymm11" => (:SIMD11, 256), "zmm11" => (:SIMD11, 512),
+    "xmm12" => (:SIMD12, 128), "ymm12" => (:SIMD12, 256), "zmm12" => (:SIMD12, 512),
+    "xmm13" => (:SIMD13, 128), "ymm13" => (:SIMD13, 256), "zmm13" => (:SIMD13, 512),
+    "xmm14" => (:SIMD14, 128), "ymm14" => (:SIMD14, 256), "zmm14" => (:SIMD14, 512),
+    "xmm15" => (:SIMD15, 128), "ymm15" => (:SIMD15, 256), "zmm15" => (:SIMD15, 512),
+    "xmm16" => (:SIMD16, 128), "ymm16" => (:SIMD16, 256), "zmm16" => (:SIMD16, 512),
+    "xmm17" => (:SIMD17, 128), "ymm17" => (:SIMD17, 256), "zmm17" => (:SIMD17, 512),
+    "xmm18" => (:SIMD18, 128), "ymm18" => (:SIMD18, 256), "zmm18" => (:SIMD18, 512),
+    "xmm19" => (:SIMD19, 128), "ymm19" => (:SIMD19, 256), "zmm19" => (:SIMD19, 512),
+    "xmm20" => (:SIMD20, 128), "ymm20" => (:SIMD20, 256), "zmm20" => (:SIMD20, 512),
+    "xmm21" => (:SIMD21, 128), "ymm21" => (:SIMD21, 256), "zmm21" => (:SIMD21, 512),
+    "xmm22" => (:SIMD22, 128), "ymm22" => (:SIMD22, 256), "zmm22" => (:SIMD22, 512),
+    "xmm23" => (:SIMD23, 128), "ymm23" => (:SIMD23, 256), "zmm23" => (:SIMD23, 512),
+    "xmm24" => (:SIMD24, 128), "ymm24" => (:SIMD24, 256), "zmm24" => (:SIMD24, 512),
+    "xmm25" => (:SIMD25, 128), "ymm25" => (:SIMD25, 256), "zmm25" => (:SIMD25, 512),
+    "xmm26" => (:SIMD26, 128), "ymm26" => (:SIMD26, 256), "zmm26" => (:SIMD26, 512),
+    "xmm27" => (:SIMD27, 128), "ymm27" => (:SIMD27, 256), "zmm27" => (:SIMD27, 512),
+    "xmm28" => (:SIMD28, 128), "ymm28" => (:SIMD28, 256), "zmm28" => (:SIMD28, 512),
+    "xmm29" => (:SIMD29, 128), "ymm29" => (:SIMD29, 256), "zmm29" => (:SIMD29, 512),
+    "xmm30" => (:SIMD30, 128), "ymm30" => (:SIMD30, 256), "zmm30" => (:SIMD30, 512),
+    "xmm31" => (:SIMD31, 128), "ymm31" => (:SIMD31, 256), "zmm31" => (:SIMD31, 512),
+    "k0" => (:MASK0, 64), "k1" => (:MASK1, 64), "k2" => (:MASK2, 64), "k3" => (:MASK3, 64),
+    "k4" => (:MASK4, 64), "k5" => (:MASK5, 64), "k6" => (:MASK6, 64), "k7" => (:MASK7, 64),
+])
 
 
 const X86_POINTER_SIZES = Dict{String,Int}(
