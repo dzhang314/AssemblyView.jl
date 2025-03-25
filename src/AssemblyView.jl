@@ -7,17 +7,10 @@ module AssemblyView
 using InteractiveUtils: code_native
 
 
-# TODO: Is dump_module=true or dump_module=false more appropriate here?
-# They generate different assembly code, and I'm not sure which is more
-# faithful to the code that Julia actually executes.
-
-
 function assembly_lines(@nospecialize(f), @nospecialize(types))
     buffer = IOBuffer()
-    code_native(
-        buffer, f, types;
-        syntax=:intel, debuginfo=:default, binary=true, dump_module=false
-    )
+    code_native(buffer, f, types; syntax=:intel, debuginfo=:default,
+        dump_module=true, binary=false, raw=false)
     return split(String(take!(buffer)), '\n'; keepempty=false)
 end
 
@@ -31,8 +24,6 @@ using Base.Iterators: partition
 const BLOCK_OPEN_REGEX = r"^; (│*)┌ @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CONTINUE_REGEX = r"^; (│*) @ (.*) within `(.*)`(?: @ (.*))?$"
 const BLOCK_CLOSE_REGEX = r"^; (│*)(└+)$"
-const CODE_INFO_REGEX = r"^; code origin: ([0-9a-f]+), code size: ([0-9]+)$"
-const HEX_INSTRUCTION_REGEX = r"^; ([0-9a-f]{4}): ([0-9a-f ]*)(?:\s*#.*)?$"
 
 
 struct SourceLocation
@@ -47,8 +38,10 @@ function SourceLocation(s::SubString{String})
         return SourceLocation(s, nothing)
     else
         try
-            line_number = parse(Int, s[colon_index+1:end]; base=10)
-            return SourceLocation(s[1:colon_index-1], line_number)
+            file_name = @view s[begin:colon_index-1]
+            line_string = @view s[colon_index+1:end]
+            line_number = parse(Int, line_string; base=10)
+            return SourceLocation(file_name, line_number)
         catch
             SourceLocation(s, nothing)
         end
@@ -68,8 +61,6 @@ end
 # It simply acts as a container for the metadata printed by `code_native`.
 struct AssemblyInstruction
     code::SubString{String}
-    short_address::UInt16
-    binary::Vector{UInt8}
     context::Vector{SourceContext}
 end
 
@@ -79,45 +70,68 @@ struct AssemblyLabel
 end
 
 
-function parse_metadata(lines::Vector{SubString{String}})
+function is_label(line::SubString{String})
+    if startswith(line, '\t')
+        return false
+    end
+    hash_index = findfirst('#', line)
+    if !isnothing(hash_index)
+        line = rstrip(@view line[begin:hash_index-1])
+    end
+    return endswith(line, ':')
+end
 
-    code_origin = nothing
-    code_size = nothing
-    last_short_address = nothing
-    last_binary = nothing
+
+function extract_label(line::SubString{String})
+    @assert !startswith(line, '\t')
+    hash_index = findfirst('#', line)
+    if !isnothing(hash_index)
+        line = rstrip(@view line[begin:hash_index-1])
+    end
+    @assert endswith(line, ':')
+    return AssemblyLabel(@view line[begin:end-1])
+end
+
+
+function parse_metadata(lines::Vector{SubString{String}})
     context_stack = SourceContext[]
     result = Union{AssemblyInstruction,AssemblyLabel}[]
-
     for line in lines
 
-        if ((line == "\t.text") ||
-            (line == "\t.section\t__TEXT,__text,regular,pure_instructions"))
+        if startswith(line, "\t.")
+            recognized =
+                (line == "\t.text") ||
+                startswith(line, "\t.file\t") ||
+                startswith(line, "\t.size\t") ||
+                startswith(line, "\t.type\t") ||
+                startswith(line, "\t.global\t") ||
+                startswith(line, "\t.globl\t") ||
+                startswith(line, "\t.p2align\t") ||
+                startswith(line, "\t.section\t")
+            if !recognized
+                @warn "Ignoring unrecognized assembler directive: $line"
+            end
 
-            # Ignore .text section header.
-            continue
+        elseif is_label(line)
+            push!(result, extract_label(line))
+
+        elseif startswith(lstrip(line), '#')
+            # TODO: Decide which comments should be kept or discarded.
 
         elseif startswith(line, ';')
-
-            # The output of `code_native` contains several types of comments
-            # that provide useful metadata about the generated assembly code.
-            # We use regular expressions to detect and parse these comments.
+            # The output of `code_native` contains `debuginfo` comments that
+            # specify the location of the Julia source code corresponding to
+            # each assembly instruction. We use regular expressions to parse
+            # this information.
             block_open_match = match(BLOCK_OPEN_REGEX, line)
             block_continue_match = match(BLOCK_CONTINUE_REGEX, line)
             block_close_match = match(BLOCK_CLOSE_REGEX, line)
-            code_info_match = match(CODE_INFO_REGEX, line)
-            hex_instruction_match = match(HEX_INSTRUCTION_REGEX, line)
-
-            # Assert that at most one match occurred.
             @assert +(
                 !isnothing(block_open_match),
                 !isnothing(block_continue_match),
                 !isnothing(block_close_match),
-                !isnothing(code_info_match),
-                !isnothing(hex_instruction_match),
-            ) <= 1
-
+            ) <= 1 # At most one match can occur.
             if !isnothing(block_open_match)
-
                 # A block_open comment indicates that all subsequent assembly
                 # instructions are generated from a particular Julia function
                 # until a corresponding block_continue or block_close comment
@@ -136,9 +150,7 @@ function parse_metadata(lines::Vector{SubString{String}})
                         SourceLocation.(split(path_str, " @ "))
                     ))
                 end
-
             elseif !isnothing(block_continue_match)
-
                 # A block_continue comment closes one block and immediately
                 # opens another block in the same line.
                 stack_str, loc_str, func_name, path_str = block_continue_match
@@ -155,9 +167,7 @@ function parse_metadata(lines::Vector{SubString{String}})
                         SourceLocation.(split(path_str, " @ "))
                     ))
                 end
-
             elseif !isnothing(block_close_match)
-
                 # A block_close comment closes one or more open blocks,
                 # indicated by the number of '└' characters.
                 stack_str, close_str = block_close_match
@@ -167,56 +177,19 @@ function parse_metadata(lines::Vector{SubString{String}})
                     pop!(context_stack)
                 end
                 @assert length(context_stack) == length(stack_str)
-
-            elseif !isnothing(code_info_match)
-
-                # A code_info comment specifies the location in (virtual)
-                # memory and size of the compiled machine code for a particular
-                # Julia function. Exactly one code_info comment should appear
-                # in the output of each call to `code_native`.
-                @assert isnothing(code_origin) && isnothing(code_size)
-                code_origin_str, code_size_str = code_info_match
-                code_origin = parse(UInt, code_origin_str; base=16)
-                code_size = parse(Int, code_size_str; base=10)
-
-            elseif !isnothing(hex_instruction_match)
-
-                # A hex_instruction comment specifies the binary machine code
-                # representation of the following assembly instruction.
-                # AssemblyView.jl makes no effort to decode this; we simply
-                # store it and pass it through to user.
-                short_address_str, byte_str = hex_instruction_match
-                last_short_address = parse(UInt16, short_address_str; base=16)
-                byte_str = replace(byte_str, isspace => "")
-                @assert iseven(length(byte_str))
-                last_binary = [
-                    parse(UInt8, byte; base=16)
-                    for byte in partition(byte_str, 2)
-                ]
-
             else
-                @warn "Ignoring assembly comment in unrecognized format: $line"
+                @warn "Ignoring unrecognized debuginfo comment:\n$line"
             end
 
         elseif startswith(line, '\t')
-            @assert !isnothing(last_short_address)
-            @assert !isnothing(last_binary)
-            push!(result, AssemblyInstruction(
-                line, last_short_address, last_binary, copy(context_stack)
-            ))
-        elseif endswith(line, ':')
-            push!(result, AssemblyLabel(line[1:end-1]))
+            push!(result, AssemblyInstruction(line, copy(context_stack)))
+
         else
-            @warn "Ignoring assembly line in unrecognized format: $line"
+            @warn "Ignoring unrecognized assembly code:\n$line"
         end
-
     end
-
-    @assert !isnothing(code_origin)
-    @assert !isnothing(code_size)
     @assert isempty(context_stack)
-    return (code_origin, code_size, result)
-
+    return result
 end
 
 
