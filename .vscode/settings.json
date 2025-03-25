@@ -3,6 +3,7 @@
         "debuginfo",
         "globl",
         "keepempty",
+        "Lfunc",
         "tbyte",
         "vaddpd",
         "vdivpd",

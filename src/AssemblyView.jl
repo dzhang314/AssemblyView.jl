@@ -113,7 +113,9 @@ function parse_metadata(lines::Vector{SubString{String}})
             end
 
         elseif is_label(line)
-            push!(result, extract_label(line))
+            if line != ".Lfunc_end0:"
+                push!(result, extract_label(line))
+            end
 
         elseif startswith(lstrip(line), '#')
             # TODO: Decide which comments should be kept or discarded.
@@ -387,6 +389,8 @@ end
 
 function X86Instruction(instruction::AssemblyInstruction)
     code = instruction.code
+    context = instruction.context
+    operands = X86Operand[]
     @assert startswith(code, '\t')
     hash_index = findfirst('#', code)
     if isnothing(hash_index)
@@ -398,16 +402,17 @@ function X86Instruction(instruction::AssemblyInstruction)
     end
     tab_index = findfirst('\t', code)
     if isnothing(tab_index)
-        return X86Instruction(code, X86Operand[], comment, instruction.context)
+        return X86Instruction(code, operands, comment, context)
     else
         opcode = @view code[begin:tab_index-1]
         if opcode == "nop"
-            return X86Instruction(
-                opcode, X86Operand[], comment, instruction.context)
+            return X86Instruction(opcode, operands, comment, context)
         end
         operands_string = @view code[tab_index+1:end]
-        operands = parse_x86_operand.(strip.(split(operands_string, ',')))
-        return X86Instruction(opcode, operands, comment, instruction.context)
+        for operand in split(operands_string, ',')
+            push!(operands, parse_x86_operand(strip(operand)))
+        end
+        return X86Instruction(opcode, operands, comment, context)
     end
 end
 
@@ -420,8 +425,7 @@ function Base.print(io::IO, op::X86RegisterOperand)
 end
 
 
-Base.print(io::IO, op::X86AddressOperand) =
-    printstyled(io, op.expr; bold=true)
+Base.print(io::IO, op::X86AddressOperand) = printstyled(io, op.expr; bold=true)
 
 
 function Base.print(io::IO, op::X86PointerOperand)
@@ -542,7 +546,7 @@ function view_asm(@nospecialize(f), @nospecialize(types...))
     @static if Sys.ARCH == :x86_64
         for line in parsed_asm(f, types...)
             if line isa X86Instruction
-                key = (line.opcode, [typeof(op) for op in line.operands])
+                key = (line.opcode, typeof.(line.operands))
                 if haskey(X86_PRINT_HANDLERS, key)
                     X86_PRINT_HANDLERS[key](line)
                 else
