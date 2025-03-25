@@ -1,9 +1,11 @@
 {
     "cSpell.words": [
         "debuginfo",
+        "endproc",
         "globl",
         "keepempty",
         "Lfunc",
+        "startproc",
         "tbyte",
         "vaddpd",
         "vdivpd",

@@ -101,15 +101,21 @@ function parse_metadata(lines::Vector{SubString{String}})
         if startswith(line, "\t.")
             recognized =
                 (line == "\t.text") ||
+                (line == "\t.cfi_startproc") ||
+                (line == "\t.cfi_endproc") ||
                 startswith(line, "\t.file\t") ||
                 startswith(line, "\t.size\t") ||
                 startswith(line, "\t.type\t") ||
                 startswith(line, "\t.global\t") ||
                 startswith(line, "\t.globl\t") ||
                 startswith(line, "\t.p2align\t") ||
-                startswith(line, "\t.section\t")
+                startswith(line, "\t.section\t") ||
+                startswith(line, "\t.cfi_offset ") ||
+                startswith(line, "\t.cfi_def_cfa ") ||
+                startswith(line, "\t.cfi_def_cfa_offset ") ||
+                startswith(line, "\t.cfi_def_cfa_register ")
             if !recognized
-                @warn "Ignoring unrecognized assembler directive: $line"
+                @warn "Ignoring unrecognized assembler directive:\n$line"
             end
 
         elseif is_label(line)
