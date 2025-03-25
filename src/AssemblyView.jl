@@ -504,7 +504,19 @@ X86_PRINT_HANDLERS[(
 )] = instruction::X86Instruction -> begin
     a, b, c = instruction.operands
     @assert a.size == b.size == c.size
-    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .+ $(c.id);")
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    print(' ')
+    printstyled(".+"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    println()
     return nothing
 end
 
@@ -515,7 +527,19 @@ X86_PRINT_HANDLERS[(
 )] = instruction::X86Instruction -> begin
     a, b, c = instruction.operands
     @assert a.size == b.size == c.size
-    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .- $(c.id);")
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    print(' ')
+    printstyled(".-"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    println()
     return nothing
 end
 
@@ -526,7 +550,19 @@ X86_PRINT_HANDLERS[(
 )] = instruction::X86Instruction -> begin
     a, b, c = instruction.operands
     @assert a.size == b.size == c.size
-    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) .* $(c.id);")
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    print(' ')
+    printstyled(".*"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    println()
     return nothing
 end
 
@@ -537,7 +573,19 @@ X86_PRINT_HANDLERS[(
 )] = instruction::X86Instruction -> begin
     a, b, c = instruction.operands
     @assert a.size == b.size == c.size
-    println("\t<$(div(a.size, 64)) x f64> $(a.id) .= $(b.id) ./ $(c.id);")
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    print(' ')
+    printstyled("./"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    println()
     return nothing
 end
 
