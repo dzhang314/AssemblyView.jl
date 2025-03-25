@@ -1,7 +1,7 @@
 name = "AssemblyView"
 uuid = "e1a66ace-d94f-4d56-9cba-db43e0ec34d1"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "0.2.1"
+version = "0.3.0"
 
 [deps]
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
