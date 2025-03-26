@@ -423,6 +423,17 @@ function X86Instruction(instruction::AssemblyInstruction)
 end
 
 
+function rewrite_address(expr::SubString{String})
+    return replace(expr,
+        "eax" => "R0", "ecx" => "R1", "edx" => "R2", "ebx" => "R3",
+        "esp" => "R4", "ebp" => "R5", "esi" => "R6", "edi" => "R7",
+        "rax" => "R0", "rcx" => "R1", "rdx" => "R2", "rbx" => "R3",
+        "rsp" => "R4", "rbp" => "R5", "rsi" => "R6", "rdi" => "R7",
+        "r8" => "R8", "r9" => "R9", "r10" => "R10", "r11" => "R11",
+        "r12" => "R12", "r13" => "R13", "r14" => "R14", "r15" => "R15")
+end
+
+
 function Base.print(io::IO, op::X86RegisterOperand)
     printstyled(io, op.id; bold=true)
     printstyled(io, '[', op.origin, ':', op.origin + op.size - 1, ']';
@@ -431,12 +442,13 @@ function Base.print(io::IO, op::X86RegisterOperand)
 end
 
 
-Base.print(io::IO, op::X86AddressOperand) = printstyled(io, op.expr; bold=true)
+Base.print(io::IO, op::X86AddressOperand) =
+    printstyled(io, rewrite_address(op.expr); bold=true)
 
 
 function Base.print(io::IO, op::X86PointerOperand)
     printstyled(io, "*("; color=:blue)
-    printstyled(io, op.address.expr; color=:blue, bold=true)
+    printstyled(io, rewrite_address(op.address.expr); color=:blue, bold=true)
     printstyled(io, ")"; color=:blue)
     printstyled(io, "[0:", op.size - 1, ']'; color=:yellow)
     return nothing
@@ -499,6 +511,85 @@ end
 
 
 X86_PRINT_HANDLERS[(
+    "mov",
+    [X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled("="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "mov",
+    [X86RegisterOperand, X86IntegerOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled("="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.value; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "movabs",
+    [X86RegisterOperand, X86OffsetOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled("="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("offset "; color=:red, bold=true)
+    printstyled(b.name; color=:red, bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "lea",
+    [X86RegisterOperand, X86AddressOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled("="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(rewrite_address(b.expr); bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "call",
+    [X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a = instruction.operands[1]
+    print('\t')
+    printstyled("call"; color=:red, bold=true)
+    print(' ')
+    printstyled(a.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
     "vmovapd",
     [X86RegisterOperand, X86RegisterOperand]
 )] = instruction::X86Instruction -> begin
@@ -508,6 +599,88 @@ X86_PRINT_HANDLERS[(
     printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
     print(' ')
     printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vmovapd",
+    [X86RegisterOperand, X86PointerOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    @assert a.size == b.size
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("*("; color=:blue)
+    printstyled(rewrite_address(b.address.expr); color=:blue, bold=true)
+    printstyled(")"; color=:blue)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vmovdqa64",
+    [X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    @assert a.size == b.size
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x i64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vmovdqa64",
+    [X86RegisterOperand, X86PointerOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    @assert a.size == b.size
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x i64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("*("; color=:blue)
+    printstyled(rewrite_address(b.address.expr); color=:blue, bold=true)
+    printstyled(")"; color=:blue)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "vmovapd",
+    [X86PointerOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    @assert a.size == b.size
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled("*("; color=:blue)
+    printstyled(rewrite_address(a.address.expr); color=:blue, bold=true)
+    printstyled(")"; color=:blue)
     print(' ')
     printstyled(".="; color=:magenta, bold=true)
     print(' ')
@@ -604,6 +777,52 @@ X86_PRINT_HANDLERS[(
     printstyled("./"; color=:magenta, bold=true)
     print(' ')
     printstyled(c.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "kandw",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    print(' ')
+    printstyled(".&"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "korw",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    print('\t')
+    printstyled(a.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    print(' ')
+    printstyled(".|"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(c.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
     println()
     return nothing
 end
