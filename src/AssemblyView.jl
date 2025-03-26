@@ -499,6 +499,25 @@ end
 
 
 X86_PRINT_HANDLERS[(
+    "vmovapd",
+    [X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b = instruction.operands
+    @assert a.size == b.size
+    print('\t')
+    printstyled("<$(div(a.size, 64)) x f64>"; color=:magenta)
+    print(' ')
+    printstyled(a.id; bold=true)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
     "vaddpd",
     [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
 )] = instruction::X86Instruction -> begin
@@ -585,6 +604,81 @@ X86_PRINT_HANDLERS[(
     printstyled("./"; color=:magenta, bold=true)
     print(' ')
     printstyled(c.id; bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "kunpckbw",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    print('\t')
+    printstyled(a.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("("; color=:magenta, bold=true)
+    printstyled(c.id; bold=true)
+    printstyled("[0:7]"; color=:yellow)
+    printstyled("...,"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    printstyled("[0:7]"; color=:yellow)
+    printstyled("...)"; color=:magenta, bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "kunpckwd",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    print('\t')
+    printstyled(a.id; bold=true)
+    printstyled("[0:31]"; color=:yellow)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("("; color=:magenta, bold=true)
+    printstyled(c.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    printstyled("...,"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    printstyled("[0:15]"; color=:yellow)
+    printstyled("...)"; color=:magenta, bold=true)
+    println()
+    return nothing
+end
+
+
+X86_PRINT_HANDLERS[(
+    "kunpckdq",
+    [X86RegisterOperand, X86RegisterOperand, X86RegisterOperand]
+)] = instruction::X86Instruction -> begin
+    a, b, c = instruction.operands
+    @assert a.size == b.size == c.size
+    print('\t')
+    printstyled(a.id; bold=true)
+    printstyled("[0:63]"; color=:yellow)
+    print(' ')
+    printstyled(".="; color=:magenta, bold=true)
+    print(' ')
+    printstyled("("; color=:magenta, bold=true)
+    printstyled(c.id; bold=true)
+    printstyled("[0:31]"; color=:yellow)
+    printstyled("...,"; color=:magenta, bold=true)
+    print(' ')
+    printstyled(b.id; bold=true)
+    printstyled("[0:31]"; color=:yellow)
+    printstyled("...)"; color=:magenta, bold=true)
     println()
     return nothing
 end
