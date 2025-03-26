@@ -9,7 +9,7 @@ using InteractiveUtils: code_native
 
 function assembly_lines(@nospecialize(f), @nospecialize(types))
     buffer = IOBuffer()
-    code_native(buffer, f, types; syntax=:intel, debuginfo=:default,
+    code_native(buffer, f, types; syntax=:intel, debuginfo=:source,
         dump_module=true, binary=false, raw=false)
     return split(String(take!(buffer)), '\n'; keepempty=false)
 end
